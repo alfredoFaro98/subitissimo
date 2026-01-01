@@ -3,6 +3,8 @@ from django.db import models
 class SearchQuery(models.Model):
     query = models.CharField(max_length=255)
     limit = models.IntegerField(default=35)
+    title_only = models.BooleanField(default=False)
+    total_results = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     
     def __str__(self):

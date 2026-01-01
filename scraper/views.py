@@ -7,8 +7,9 @@ def search_view(request):
     if request.method == 'POST':
         query = request.POST.get('query')
         limit = int(request.POST.get('limit', 35))
+        title_only = request.POST.get('title_only') == 'on'
         if query:
-            search_obj = run_search(query, limit=limit)
+            search_obj = run_search(query, limit=limit, title_only=title_only)
             return redirect('results', search_id=search_obj.id)
     return render(request, 'scraper/search.html')
 

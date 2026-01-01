@@ -4,7 +4,9 @@
 <div class="results-header">
     <div>
         <h2 style="font-size: 2rem;">Results for "{{ search.query }}"</h2>
-        <p style="color: var(--text-muted);">Found {{ items.count }} items</p>
+        <div style="margin-top: 5px; color: var(--text-muted); font-size: 0.95rem;">
+            <span style="color: var(--primary); font-weight: 600;">{{ search.total_results }}</span> items found
+        </div>
     </div>
     <div style="display: flex; gap: 10px;">
         <a href="{% url 'search' %}" class="btn-primary" style="background: transparent; border: 1px solid var(--border);">New Search</a>

@@ -99,15 +99,17 @@ def first_image_url_browser(ad: Dict[str, Any]) -> str:
         url += "?rule=gallery-desktop-1x-auto"
     return url
 
-def run_search(query: str, limit: int = 35, max_pages: int = 200, sleep: float = 0.25) -> SearchQuery:
+def run_search(query: str, limit: int = 35, title_only: bool = False, max_pages: int = 200, sleep: float = 0.25) -> SearchQuery:
     q_url = quote_plus(query)
     search_url = SEARCH_TEMPLATE.format(q=q_url)
+    if title_only:
+        search_url += "&qso=true"
     
-    # Create SearchQuery record
-    search_obj = SearchQuery.objects.create(query=query, limit=limit)
+    search_obj = SearchQuery.objects.create(query=query, limit=limit, title_only=title_only)
     
     all_ads: List[Dict[str, Any]] = []
     seen = set()
+    total_count = 0
 
     with sync_playwright() as p:
         # Use headless=True for backend service
@@ -123,13 +125,16 @@ def run_search(query: str, limit: int = 35, max_pages: int = 200, sleep: float =
             
             # Cookies should be set now
             
-            params0 = {"q": query, "start": 0, "lim": limit, "sort": "datedesc", "qso": "true"}
+            params0 = {"q": query, "start": 0, "lim": limit, "sort": "datedesc"}
+            if title_only:
+                params0["qso"] = "true"
+
             resp0 = context.request.get(HADES_URL, params=params0, timeout=60000)
             
             if resp0.ok:
                 first = resp0.json()
                 items0 = pick_items(first)
-                count_all = int(first.get("count_all") or 0)
+                total_count = int(first.get("count_all") or 0)
                 
                 # Helper to add ads
                 def add_ads_local(items):
@@ -143,12 +148,14 @@ def run_search(query: str, limit: int = 35, max_pages: int = 200, sleep: float =
                 
                 add_ads_local(items0)
                 
-                pages = (count_all + limit - 1) // limit if count_all > 0 else 0
+                pages = (total_count + limit - 1) // limit if total_count > 0 else 0
                 pages = min(pages, max_pages)
                 
                 for i in range(1, pages):
                     start = i * limit
-                    params = {"q": query, "start": start, "lim": limit, "sort": "datedesc", "qso": "true"}
+                    params = {"q": query, "start": start, "lim": limit, "sort": "datedesc"}
+                    if title_only:
+                        params["qso"] = "true"
                     r = context.request.get(HADES_URL, params=params, timeout=60000)
                     if not r.ok:
                         continue
@@ -158,6 +165,10 @@ def run_search(query: str, limit: int = 35, max_pages: int = 200, sleep: float =
                     
         finally:
             browser.close()
+
+    # Update total results
+    search_obj.total_results = total_count
+    search_obj.save()
 
     # Save Items to DB
     items_to_create = []
