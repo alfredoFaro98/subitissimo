@@ -1,0 +1,153 @@
+{% extends 'scraper/base.html' %}
+
+{% block content %}
+<div class="results-header">
+    <div>
+        <h2 style="font-size: 2rem;">Results for "{{ search.query }}"</h2>
+        <p style="color: var(--text-muted);">Found {{ items.count }} items</p>
+    </div>
+    <div style="display: flex; gap: 10px;">
+        <a href="{% url 'search' %}" class="btn-primary" style="background: transparent; border: 1px solid var(--border);">New Search</a>
+    </div>
+</div>
+
+<div class="glass-card" style="margin-bottom: 20px; padding: 20px; display: flex; align-items: center; justify-content: space-between;">
+    <div style="font-weight: 600; color: var(--text-muted);">Sort By:</div>
+    <div style="display: flex; gap: 10px;">
+        <a href="?sort=price_asc" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; {% if request.GET.sort == 'price_asc' %}background: var(--primary);{% else %}background: rgba(30, 41, 59, 0.5); color: var(--text-muted);{% endif %}">
+            Price <i class="fa-solid fa-arrow-up"></i>
+        </a>
+        <a href="?sort=price_desc" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; {% if request.GET.sort == 'price_desc' %}background: var(--primary);{% else %}background: rgba(30, 41, 59, 0.5); color: var(--text-muted);{% endif %}">
+            Price <i class="fa-solid fa-arrow-down"></i>
+        </a>
+        <a href="?sort=date_desc" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; {% if request.GET.sort == 'date_desc' or not request.GET.sort %}background: var(--primary);{% else %}background: rgba(30, 41, 59, 0.5); color: var(--text-muted);{% endif %}">
+            Newest <i class="fa-solid fa-clock"></i>
+        </a>
+        <a href="?sort=date_asc" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; {% if request.GET.sort == 'date_asc' %}background: var(--primary);{% else %}background: rgba(30, 41, 59, 0.5); color: var(--text-muted);{% endif %}">
+            Oldest <i class="fa-regular fa-clock"></i>
+        </a>
+    </div>
+</div>
+
+<div class="glass-card" style="padding: 0; overflow: hidden;">
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Image</th>
+                    <th>Price</th>
+                    <th>Title</th>
+                    <th>Location</th>
+                    <th>Date</th>
+                    <th>Shipping</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in items %}
+                <tr>
+                    <td>
+                        {% if item.image_url %}
+                        <img src="{{ item.image_url }}" alt="img" class="item-img" referrerpolicy="no-referrer">
+                        {% else %}
+                        <div class="item-img" style="display: flex; align-items: center; justify-content: center; color: var(--text-muted);">No Img</div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="price-tag">
+                            {% if item.price_num %}
+                                € {{ item.price_num|floatformat:2 }}
+                            {% else %}
+                                {{ item.price_str|default:"-" }}
+                            {% endif %}
+                        </div>
+                    </td>
+                    <td>
+                        <a href="{{ item.url }}" target="_blank" class="item-title">{{ item.title }}</a>
+                        <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">{{ item.condition|default:"" }}</div>
+                    </td>
+                    <td>
+                        <div style="font-weight: 500;">{{ item.town|default:item.province }}</div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted);">{{ item.region }}</div>
+                    </td>
+                    <td>
+                        <div style="font-size: 0.9rem;">{{ item.date_pub }}</div>
+                    </td>
+                    <td>
+                        {% if item.shippable %}
+                            <span class="badge badge-shipping">
+                                <i class="fa-solid fa-truck"></i> 
+                                {% if item.shipping_cost is not None %}
+                                    € {{ item.shipping_cost|floatformat:2 }}
+                                {% else %}
+                                    Ship Available
+                                {% endif %}
+                            </span>
+                        {% else %}
+                            <span class="badge">No Ship</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{{ item.url }}" target="_blank" class="btn-primary" style="padding: 8px 16px; font-size: 0.9rem;">
+                            View
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" style="text-align: center; padding: 40px;">No results found.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+</div>
+
+<!-- Preview Portal -->
+<div id="image-preview-portal"></div>
+
+<script>
+    const portal = document.getElementById('image-preview-portal');
+    const images = document.querySelectorAll('.item-img');
+    
+    images.forEach(img => {
+        img.addEventListener('mouseenter', (e) => {
+            const src = e.target.src;
+            if (!src) return;
+            
+            portal.innerHTML = `<img src="${src}" alt="Preview">`;
+            portal.classList.add('active');
+            
+            updatePosition(e);
+        });
+        
+        img.addEventListener('mousemove', (e) => {
+           updatePosition(e); 
+        });
+        
+        img.addEventListener('mouseleave', () => {
+            portal.classList.remove('active');
+        });
+    });
+    
+    function updatePosition(e) {
+        const offset = 20;
+        let left = e.clientX + offset;
+        let top = e.clientY - (portal.offsetHeight / 2);
+        
+        // Prevent going off screen
+        if (left + portal.offsetWidth > window.innerWidth) {
+            left = e.clientX - portal.offsetWidth - offset;
+        }
+        
+        if (top < 0) top = 10;
+        if (top + portal.offsetHeight > window.innerHeight) {
+            top = window.innerHeight - portal.offsetHeight - 10;
+        }
+        
+        portal.style.left = `${left}px`;
+        portal.style.top = `${top}px`;
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,49 @@
+{% extends 'scraper/base.html' %}
+
+{% block content %}
+<div class="glass-card search-container">
+    <h1 class="search-title">Subitissimo</h1>
+    <p class="search-subtitle">Advanced scraping & analysis for Subito.it</p>
+    
+    <form method="post" action="" class="search-form" onsubmit="document.body.classList.add('loading')">
+        {% csrf_token %}
+        <div class="form-group">
+            <input type="text" name="query" class="form-input" placeholder="What are you looking for?" required autofocus>
+        </div>
+        
+        <div class="form-group" style="display: flex; gap: 10px;">
+            <input type="number" name="limit" class="form-input" value="35" min="10" max="100" title="Results per page" style="flex: 1;">
+            <button type="submit" class="btn-primary" style="flex: 2;">
+                <span>Start Scraping</span>
+                <div class="spinner"></div>
+            </button>
+        </div>
+        
+        <div class="progress-container">
+            <div class="progress-bar" id="progressBar"></div>
+        </div>
+        <p id="loadingText" style="display:none; color: var(--text-muted); margin-top: 10px; font-size: 0.9rem;">Scraping in progress... please wait.</p>
+    </form>
+</div>
+
+<script>
+document.querySelector('.search-form').addEventListener('submit', function(e) {
+    document.body.classList.add('loading');
+    document.getElementById('loadingText').style.display = 'block';
+    
+    const bar = document.getElementById('progressBar');
+    let width = 0;
+    // Simulate progress - fast at first, then slows down
+    const interval = setInterval(() => {
+        if (width >= 90) {
+            clearInterval(interval);
+        } else {
+            // Logarithmic-ish increment
+            const increment = Math.max(0.5, (95 - width) / 20);
+            width += increment;
+            bar.style.width = width + '%';
+        }
+    }, 100);
+});
+</script>
+{% endblock %}
