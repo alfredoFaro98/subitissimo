@@ -182,6 +182,7 @@ def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_
     for ad in all_ads:
         id_annuncio = ad.get("urn") or ""
         nome = ad.get("subject") or ad.get("title") or ""
+        description = ad.get("body") or ""
 
         prezzo_str = feature_value(ad, "/price")
         prezzo_num = parse_number(feature_first(ad, "/price").get("key") or prezzo_str)
@@ -237,7 +238,8 @@ def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_
             'shippable': spedibile,
             'likes_count': likes_val,
             'image_url': img_url,
-            'url': url
+            'url': url,
+            'description': description
         }
         items_list.append(item_dict)
 

@@ -16,39 +16,46 @@
 
 <div class="glass-card" style="margin-bottom: 20px; padding: 20px; display: flex; align-items: center; justify-content: space-between;">
     <div style="font-weight: 600; color: var(--text-muted);">Sort By:</div>
-    <div style="display: flex; gap: 10px;">
+    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
         <a href="?sort=price_asc" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; {% if request.GET.sort == 'price_asc' %}background: var(--primary);{% else %}background: rgba(30, 41, 59, 0.5); color: var(--text-muted);{% endif %}">
-            Price <i class="fa-solid fa-arrow-up"></i>
+            Prezzo <i class="fa-solid fa-arrow-up"></i>
         </a>
         <a href="?sort=price_desc" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; {% if request.GET.sort == 'price_desc' %}background: var(--primary);{% else %}background: rgba(30, 41, 59, 0.5); color: var(--text-muted);{% endif %}">
-            Price <i class="fa-solid fa-arrow-down"></i>
+            Prezzo <i class="fa-solid fa-arrow-down"></i>
         </a>
         <a href="?sort=date_desc" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; {% if request.GET.sort == 'date_desc' or not request.GET.sort %}background: var(--primary);{% else %}background: rgba(30, 41, 59, 0.5); color: var(--text-muted);{% endif %}">
-            Newest <i class="fa-solid fa-clock"></i>
+            Più recenti <i class="fa-solid fa-clock"></i>
         </a>
         <a href="?sort=date_asc" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; {% if request.GET.sort == 'date_asc' %}background: var(--primary);{% else %}background: rgba(30, 41, 59, 0.5); color: var(--text-muted);{% endif %}">
-            Oldest <i class="fa-regular fa-clock"></i>
+            Più vecchi <i class="fa-regular fa-clock"></i>
         </a>
         
+        <div style="width: 1px; background: rgba(255,255,255,0.1); margin: 0 10px;"></div>
+
+        <!-- All Results Filter -->
+        <a href="?sort={{ request.GET.sort }}" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; {% if not request.GET.shippable %}background: var(--primary);{% else %}background: rgba(30, 41, 59, 0.5); color: var(--text-muted);{% endif %}">
+            Tutti
+        </a>
+
         <!-- Shipping Filter Toggle -->
         {% if request.GET.shippable == 'true' %}
             <a href="?sort={{ request.GET.sort }}" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; background: var(--primary);">
-                Shippable Only <i class="fa-solid fa-check"></i>
+                Spedizione <i class="fa-solid fa-check"></i>
             </a>
         {% else %}
             <a href="?sort={{ request.GET.sort }}&shippable=true" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; background: rgba(30, 41, 59, 0.5); color: var(--text-muted);">
-                Shippable Only <i class="fa-solid fa-truck"></i>
+                Spedizione <i class="fa-solid fa-truck"></i>
             </a>
         {% endif %}
 
         <!-- No Shipping Filter -->
         {% if request.GET.shippable == 'false' %}
             <a href="?sort={{ request.GET.sort }}" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; background: var(--primary);">
-                No Shipping <i class="fa-solid fa-check"></i>
+                No Spedizione <i class="fa-solid fa-check"></i>
             </a>
         {% else %}
             <a href="?sort={{ request.GET.sort }}&shippable=false" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; background: rgba(30, 41, 59, 0.5); color: var(--text-muted);">
-                No Shipping <i class="fa-solid fa-handshake"></i>
+                No Spedizione <i class="fa-solid fa-handshake"></i>
             </a>
         {% endif %}
     </div>
@@ -59,6 +66,7 @@
         <table>
             <thead>
                 <tr>
+                    <th style="width: 50px;">#</th>
                     <th>Image</th>
                     <th>Price</th>
                     <th>Title</th>
@@ -71,6 +79,7 @@
             <tbody>
                 {% for item in items %}
                 <tr>
+                    <td style="color: var(--text-muted); font-weight: 600;">{{ forloop.counter }}</td>
                     <td>
                         {% if item.image_url %}
                         <img src="{{ item.image_url }}" alt="img" class="item-img" referrerpolicy="no-referrer">
@@ -88,7 +97,7 @@
                         </div>
                     </td>
                     <td>
-                        <a href="{{ item.url }}" target="_blank" class="item-title">{{ item.title }}</a>
+                        <a href="{{ item.url }}" target="_blank" class="item-title" data-desc="{{ item.description|default:'No description available' }}">{{ item.title }}</a>
                         <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">{{ item.condition|default:"" }}</div>
                     </td>
                     <td>
@@ -136,6 +145,8 @@
 
 <!-- Preview Portal -->
 <div id="image-preview-portal"></div>
+<!-- Description Tooltip -->
+<div id="desc-tooltip"></div>
 
 <script>
     const portal = document.getElementById('image-preview-portal');
@@ -179,5 +190,58 @@
         portal.style.left = `${left}px`;
         portal.style.top = `${top}px`;
     }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        // Description Tooltip Logic
+        const descTooltip = document.getElementById('desc-tooltip');
+        const titles = document.querySelectorAll('.item-title');
+        
+        console.log('Tooltip script loaded. Found titles:', titles.length);
+
+        titles.forEach(title => {
+            title.addEventListener('mouseenter', (e) => {
+                const text = e.target.getAttribute('data-desc');
+                console.log('Hover on title. Desc:', text ? text.substring(0, 20) + '...' : 'None');
+                
+                if (!text || text === 'No description available') {
+                     // Still show tooltip for "No description" to prove it works
+                     descTooltip.textContent = text || 'No description available';
+                } else {
+                     descTooltip.textContent = text;
+                }
+                
+                descTooltip.classList.add('active');
+                updateDescPosition(e);
+            });
+
+            title.addEventListener('mousemove', (e) => {
+                updateDescPosition(e);
+            });
+
+            title.addEventListener('mouseleave', () => {
+                descTooltip.classList.remove('active');
+            });
+        });
+
+        function updateDescPosition(e) {
+            if (!descTooltip) return;
+            const offset = 15;
+            let left = e.clientX + offset;
+            let top = e.clientY + offset;
+
+            // Ensure tooltip doesn't overflow viewport
+            const tooltipRect = descTooltip.getBoundingClientRect();
+            
+            if (left + tooltipRect.width > window.innerWidth) {
+                left = e.clientX - tooltipRect.width - offset;
+            }
+            if (top + tooltipRect.height > window.innerHeight) {
+                top = e.clientY - tooltipRect.height - offset;
+            }
+            
+            descTooltip.style.left = `${left}px`;
+            descTooltip.style.top = `${top}px`;
+        }
+    });
 </script>
 {% endblock %}
