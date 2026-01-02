@@ -1,7 +1,9 @@
 {% extends 'scraper/base.html' %}
 
+{% block main_class %}container-wide{% endblock %}
+
 {% block content %}
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+    <div class="results-header">
         <div style="color: var(--text-muted);">
             Found <span style="color: var(--primary); font-weight: 600;">{{ search.total_results }}</span> results for "{{ search.query }}"
         </div>
@@ -61,13 +63,14 @@
     </div>
 </div>
 
-<div class="glass-card" style="padding: 0; overflow: hidden;">
+<div class="glass-card desktop-only" style="padding: 0; overflow: hidden;">
     <div class="table-container">
         <table>
             <thead>
                 <tr>
                     <th style="width: 50px;">#</th>
                     <th>Image</th>
+                    <th>Stato</th>
                     <th>Price</th>
                     <th>Title</th>
                     <th>Location</th>
@@ -84,8 +87,13 @@
                         {% if item.image_url %}
                         <img src="{{ item.image_url }}" alt="img" class="item-img" referrerpolicy="no-referrer">
                         {% else %}
-                        <div class="item-img" style="display: flex; align-items: center; justify-content: center; color: var(--text-muted);">No Img</div>
+                        <div class="item-img" style="display: flex; align-items: center; justify-content: center; background: #334155;">
+                            <i class="fa-solid fa-image" style="color: #64748b;"></i>
+                        </div>
                         {% endif %}
+                    </td>
+                    <td style="text-align: center;">
+                        <span class="tooltip-target" data-desc="{{ item.defect_reason }}" style="font-size: 1.2rem; cursor: help;">{{ item.defect_flag }}</span>
                     </td>
                     <td>
                         <div class="price-tag">
@@ -97,7 +105,7 @@
                         </div>
                     </td>
                     <td>
-                        <a href="{{ item.url }}" target="_blank" class="item-title" data-desc="{{ item.description|default:'No description available' }}">{{ item.title }}</a>
+                        <a href="{{ item.url }}" target="_blank" class="item-title tooltip-target" data-desc="{{ item.description|default:'No description available' }}">{{ item.title }}</a>
                         <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">{{ item.condition|default:"" }}</div>
                     </td>
                     <td>
@@ -141,6 +149,79 @@
         </table>
     </div>
 </div>
+
+<!-- Mobile Results View -->
+<div class="mobile-results">
+    {% for item in items %}
+    <div class="mobile-card">
+        <div class="mobile-card-row">
+            <div class="mobile-card-img-container">
+                {% if item.image_url %}
+                <img src="{{ item.image_url }}" alt="img" class="mobile-card-img" referrerpolicy="no-referrer">
+                {% else %}
+                <div class="mobile-card-img placeholder">
+                    <i class="fa-solid fa-image"></i>
+                </div>
+                {% endif %}
+            </div>
+            <div class="mobile-card-content">
+                <a href="{{ item.url }}" target="_blank" class="mobile-card-title">{{ item.title }}</a>
+                <div class="mobile-card-price">
+                    {% if item.price_num %}
+                        € {{ item.price_num|floatformat:2 }}
+                    {% else %}
+                        {{ item.price_str|default:"-" }}
+                    {% endif %}
+                </div>
+                <div class="mobile-card-meta">
+                    <span>{{ item.town|default:item.province }} ({{ item.region }})</span>
+                    <span style="color: var(--text-muted);">•</span>
+                    <span>
+                        {% if item.date_pub_iso %}
+                            {{ item.date_pub_iso|timesince }} fa
+                        {% else %}
+                            {{ item.date_pub }}
+                        {% endif %}
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status Row (Inline text, no tooltip) -->
+        <div class="mobile-card-status">
+            <span style="font-size: 1.1rem; vertical-align: middle;">{{ item.defect_flag }}</span>
+            {% if item.defect_reason %}
+                <span style="font-size: 0.9rem; color: var(--text-muted); margin-left: 6px;">{{ item.defect_reason }}</span>
+            {% else %}
+                    <span style="font-size: 0.9rem; color: #22c55e; margin-left: 6px;">Nessun difetto rilevato</span>
+            {% endif %}
+        </div>
+        
+        <div class="mobile-card-footer">
+            <div style="font-size: 0.8rem; color: var(--text-muted);">
+                {{ item.condition|default:"" }}
+            </div>
+            
+            <div style="display: flex; align-items: center; gap: 10px;">
+                {% if item.shippable %}
+                    <span class="badge badge-shipping">
+                        <i class="fa-solid fa-truck"></i> 
+                        {% if item.shipping_cost is not None %}
+                            € {{ item.shipping_cost|floatformat:2 }}
+                        {% endif %}
+                    </span>
+                {% endif %}
+                <a href="{{ item.url }}" target="_blank" class="btn-primary" style="padding: 6px 12px; font-size: 0.8rem;">
+                    View <i class="fa-solid fa-arrow-right" style="margin-left: 4px;"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+    {% empty %}
+    <div style="text-align: center; padding: 40px; color: var(--text-muted);">
+        No results found.
+    </div>
+    {% endfor %}
 </div>
 
 <!-- Preview Portal -->
@@ -194,18 +275,21 @@
     document.addEventListener('DOMContentLoaded', () => {
         // Description Tooltip Logic
         const descTooltip = document.getElementById('desc-tooltip');
-        const titles = document.querySelectorAll('.item-title');
+        // Select anything with tooltip-target class (titles AND status icons)
+        const triggers = document.querySelectorAll('.tooltip-target');
         
-        console.log('Tooltip script loaded. Found titles:', titles.length);
+        console.log('Tooltip script loaded. Found triggers:', triggers.length);
 
-        titles.forEach(title => {
-            title.addEventListener('mouseenter', (e) => {
+        triggers.forEach(trigger => {
+            trigger.addEventListener('mouseenter', (e) => {
                 const text = e.target.getAttribute('data-desc');
-                console.log('Hover on title. Desc:', text ? text.substring(0, 20) + '...' : 'None');
+                console.log('Hover. Desc:', text ? text.substring(0, 20) + '...' : 'None');
+                
+                // For Status: we want the reason. For Title: we want description.
+                // Both are stored in 'data-desc'.
                 
                 if (!text || text === 'No description available') {
-                     // Still show tooltip for "No description" to prove it works
-                     descTooltip.textContent = text || 'No description available';
+                     descTooltip.textContent = text || 'No info';
                 } else {
                      descTooltip.textContent = text;
                 }
@@ -214,11 +298,11 @@
                 updateDescPosition(e);
             });
 
-            title.addEventListener('mousemove', (e) => {
+            trigger.addEventListener('mousemove', (e) => {
                 updateDescPosition(e);
             });
 
-            title.addEventListener('mouseleave', () => {
+            trigger.addEventListener('mouseleave', () => {
                 descTooltip.classList.remove('active');
             });
         });

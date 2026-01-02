@@ -221,6 +221,10 @@ def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_
         url = normalize_url(ad)
         img_url = first_image_url_browser(ad)
         
+        # Defect Detection
+        from .text_flags import detect_defects
+        defects = detect_defects(nome, description)
+        
         item_dict = {
             'subito_id': id_annuncio,
             'title': nome,
@@ -239,7 +243,9 @@ def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_
             'likes_count': likes_val,
             'image_url': img_url,
             'url': url,
-            'description': description
+            'description': description,
+            'defect_flag': defects['flag'],
+            'defect_reason': defects['reason']
         }
         items_list.append(item_dict)
 
