@@ -13,6 +13,9 @@
                 <i class="fa-solid fa-map"></i> View on Map
             </a>
             <a href="{% url 'search' %}" class="btn-primary" style="padding: 8px 16px; font-size: 0.9rem;">New Search</a>
+            <button id="save-search-btn" class="btn-primary" style="padding: 8px 16px; font-size: 0.9rem; background: rgba(168, 85, 247, 0.2); border: 1px solid rgba(168, 85, 247, 0.4); color: #c084fc;">
+                <i class="fa-solid fa-bookmark"></i> Save
+            </button>
         </div>
     </div>
 
@@ -32,6 +35,33 @@
             Più vecchi <i class="fa-regular fa-clock"></i>
         </a>
         
+        <div style="width: 1px; background: rgba(255,255,255,0.1); margin: 0 10px;"></div>
+        
+        <!-- Location Filters -->
+        <form id="location-filter-form" action="{% url 'search' %}" method="POST" style="display: contents;">
+            {% csrf_token %}
+            <input type="hidden" name="query" value="{{ search.query }}">
+            <input type="hidden" name="title_only" value="{% if title_only %}on{% endif %}">
+            <input type="hidden" name="shippable_only" value="{% if shippable_only %}on{% endif %}">
+            
+            <div style="position: relative;">
+                <select name="region" id="res-region-select" class="btn-primary" style="appearance: none; -webkit-appearance: none; padding-right: 35px; background: rgba(30, 41, 59, 0.5); color: var(--text-muted); border: 1px solid var(--border); font-family: inherit;">
+                    <option value="">Regione: Tutto</option>
+                    {% for slug, name in regions %}
+                    <option value="{{ slug }}" {% if current_region == slug %}selected{% endif %}>{{ name }}</option>
+                    {% endfor %}
+                </select>
+                <i class="fa-solid fa-chevron-down" style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-muted); font-size: 0.8rem;"></i>
+            </div>
+
+            <div style="position: relative;">
+                <select name="province" id="res-province-select" class="btn-primary" style="appearance: none; -webkit-appearance: none; padding-right: 35px; background: rgba(30, 41, 59, 0.5); color: var(--text-muted); border: 1px solid var(--border); font-family: inherit;" {% if not current_region %}disabled{% endif %}>
+                    <option value="">Provincia: Tutte</option>
+                </select>
+                <i class="fa-solid fa-chevron-down" style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-muted); font-size: 0.8rem;"></i>
+            </div>
+        </form>
+
         <div style="width: 1px; background: rgba(255,255,255,0.1); margin: 0 10px;"></div>
 
         <!-- All Results Filter -->
@@ -138,6 +168,21 @@
                         <a href="{{ item.url }}" target="_blank" class="btn-primary" style="padding: 8px 16px; font-size: 0.9rem;">
                             View
                         </a>
+                        <button class="btn-primary favorite-btn" 
+                            data-id="{{ item.subito_id }}"
+                            data-title="{{ item.title }}"
+                            data-price-str="{{ item.price_str|default:'' }}"
+                            data-price-num="{{ item.price_num|default:'' }}"
+                            data-url="{{ item.url }}"
+                            data-image-url="{{ item.image_url|default:'' }}"
+                            data-town="{{ item.town|default:'' }}"
+                            data-region="{{ item.region|default:'' }}"
+                            data-town="{{ item.town|default:'' }}"
+                            data-region="{{ item.region|default:'' }}"
+                            style="padding: 8px 10px; font-size: 0.9rem; background: rgba(255, 255, 255, 0.1); margin-left: 5px;"
+                            class="btn-primary favorite-btn {% if item.is_favorite %}active{% endif %}">
+                            <i class="{% if item.is_favorite %}fa-solid{% else %}fa-regular{% endif %} fa-heart" {% if item.is_favorite %}style="color: #ef4444;"{% endif %}></i>
+                        </button>
                     </td>
                 </tr>
                 {% empty %}
@@ -214,6 +259,21 @@
                 <a href="{{ item.url }}" target="_blank" class="btn-primary" style="padding: 6px 12px; font-size: 0.8rem;">
                     View <i class="fa-solid fa-arrow-right" style="margin-left: 4px;"></i>
                 </a>
+                <button class="btn-primary favorite-btn" 
+                    data-id="{{ item.subito_id }}"
+                    data-title="{{ item.title }}"
+                    data-price-str="{{ item.price_str|default:'' }}"
+                    data-price-num="{{ item.price_num|default:'' }}"
+                    data-url="{{ item.url }}"
+                    data-image-url="{{ item.image_url|default:'' }}"
+                    data-town="{{ item.town|default:'' }}"
+                    data-region="{{ item.region|default:'' }}"
+                    data-town="{{ item.town|default:'' }}"
+                    data-region="{{ item.region|default:'' }}"
+                    style="padding: 6px 10px; font-size: 0.8rem; background: rgba(255, 255, 255, 0.1);"
+                    class="btn-primary favorite-btn {% if item.is_favorite %}active{% endif %}">
+                    <i class="{% if item.is_favorite %}fa-solid{% else %}fa-regular{% endif %} fa-heart" {% if item.is_favorite %}style="color: #ef4444;"{% endif %}></i>
+                </button>
             </div>
         </div>
     </div>
@@ -325,6 +385,164 @@
             
             descTooltip.style.left = `${left}px`;
             descTooltip.style.top = `${top}px`;
+        }
+    });
+    
+    // Results Page Location Filter Logic
+    const provincesData = {{ provinces_json|safe }};
+    const resRegionSelect = document.getElementById('res-region-select');
+    const resProvinceSelect = document.getElementById('res-province-select');
+    const currentProv = "{{ current_province|default:'' }}";
+    const filterForm = document.getElementById('location-filter-form');
+
+    if (resRegionSelect) {
+        // Init provinces if region selected
+        function updateProvinces(triggerSubmit = false) {
+            const region = resRegionSelect.value;
+            
+            // Save current selection if we are just initing
+            const selectedProv = resProvinceSelect.value || currentProv;
+            
+            resProvinceSelect.innerHTML = '<option value="">Provincia: Tutte</option>';
+            resProvinceSelect.disabled = !region;
+            
+            // Update styling to active if selected
+            if (region) {
+                 resRegionSelect.style.background = 'var(--primary)';
+                 resRegionSelect.style.color = 'white';
+                 resRegionSelect.nextElementSibling.style.color = 'white';
+            } else {
+                 resRegionSelect.style.background = 'rgba(30, 41, 59, 0.5)';
+                 resRegionSelect.style.color = 'var(--text-muted)';
+                 resRegionSelect.nextElementSibling.style.color = 'var(--text-muted)';
+            }
+            
+            if (region && provincesData[region]) {
+                provincesData[region].forEach(p => {
+                    const option = document.createElement('option');
+                    option.value = p[0];
+                    option.textContent = p[1];
+                    if (p[0] === selectedProv) {
+                        option.selected = true;
+                    }
+                    resProvinceSelect.appendChild(option);
+                });
+            }
+            
+            if (triggerSubmit) {
+                 // If region changed to empty, submit. If changed to something else, wait for province? 
+                 // Actually user might want search whole region. So submit.
+                 // But wait, if they want to select province, we shouldn't submit immediately?
+                 // No, usually filters apply on change. If I reload, province selection is lost unless I persist it through session (which I do).
+                 // But if I reload page, I lose the ability to select province immediately without another reload.
+                 // Better UX: change region -> valid provinces load -> user selects province -> submit.
+                 // OR: change region -> submit.
+                 
+                 // If we submit on region change, page reloads, filtered by region. Then user selects province -> submit again.
+                 filterForm.submit();
+            }
+            
+            // Province styling
+            if (resProvinceSelect.value) {
+                 resProvinceSelect.style.background = 'var(--primary)';
+                 resProvinceSelect.style.color = 'white';
+                 resProvinceSelect.nextElementSibling.style.color = 'white';
+            } else {
+                 resProvinceSelect.style.background = 'rgba(30, 41, 59, 0.5)';
+                 resProvinceSelect.style.color = 'var(--text-muted)';
+                 resProvinceSelect.nextElementSibling.style.color = 'var(--text-muted)';
+            }
+        }
+
+        resRegionSelect.addEventListener('change', function() {
+             // On region change, we just submit. 
+             // Implementing "wait for province" is tricky without AJAX or a dedicated "Apply" button.
+             // Given the request "like existing filters" (which are links that reload), auto-reload is expected.
+             filterForm.submit();
+        });
+        
+        resProvinceSelect.addEventListener('change', function() {
+             filterForm.submit();
+        });
+        
+        // Initial load
+        updateProvinces(false);
+    }
+    document.addEventListener('DOMContentLoaded', () => {
+        // Toggle Favorite
+        document.querySelectorAll('.favorite-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation(); // Prevent card click
+                
+                const data = {
+                    subito_id: btn.dataset.id,
+                    title: btn.dataset.title,
+                    price_str: btn.dataset.priceStr,
+                    price_num: btn.dataset.priceNum,
+                    url: btn.dataset.url,
+                    image_url: btn.dataset.imageUrl,
+                    town: btn.dataset.town,
+                    region: btn.dataset.region
+                };
+                
+                // Toggle UI immediately for responsiveness
+                btn.classList.toggle('active');
+                const icon = btn.querySelector('i');
+                if (btn.classList.contains('active')) {
+                    icon.classList.remove('fa-regular');
+                    icon.classList.add('fa-solid');
+                    icon.style.color = '#ef4444'; // Red
+                } else {
+                    icon.classList.remove('fa-solid');
+                    icon.classList.add('fa-regular');
+                    icon.style.color = 'inherit';
+                }
+                
+                try {
+                    const response = await fetch("{% url 'toggle_favorite' %}", {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRFToken': '{{ csrf_token }}',
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(data)
+                    });
+                    // Should verify success but UI is already updated
+                } catch (err) {
+                    console.error('Error toggling favorite:', err);
+                    // Revert UI on error?
+                }
+            });
+        });
+        
+        // Save Search
+        const saveSearchBtn = document.getElementById('save-search-btn');
+        if (saveSearchBtn) {
+            saveSearchBtn.addEventListener('click', async () => {
+                const query = "{{ search.query|escapejs }}";
+                if (!query) return;
+                
+                try {
+                    const response = await fetch("{% url 'save_search' %}", {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRFToken': '{{ csrf_token }}',
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ query: query })
+                    });
+                     const resData = await response.json();
+                     if (resData.status === 'ok') {
+                         saveSearchBtn.innerHTML = '<i class="fa-solid fa-check"></i> Saved';
+                         setTimeout(() => {
+                             saveSearchBtn.innerHTML = '<i class="fa-solid fa-bookmark"></i> Save';
+                         }, 2000);
+                     }
+                } catch (err) {
+                     console.error(err);
+                }
+            });
         }
     });
 </script>

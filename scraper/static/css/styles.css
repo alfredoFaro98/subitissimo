@@ -527,3 +527,9 @@ footer {
         display: none;
     }
 }
+
+@media (max-width: 768px) {
+    .desktop-only-inline {
+        display: none;
+    }
+}

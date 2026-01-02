@@ -1,0 +1,53 @@
+{% extends 'scraper/base.html' %}
+
+{% block content %}
+<div class="glass-card">
+    <h2 class="search-title" style="font-size: 2rem; margin-bottom: 20px;">Ricerche Salvate</h2>
+    
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Query</th>
+                    <th>Prezzo Min</th>
+                    <th>Prezzo Max</th>
+                    <th>Data Salvataggio</th>
+                    <th>Azioni</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in saved %}
+                <tr>
+                    <td style="font-weight: 600; color: var(--primary);">{{ item.query }}</td>
+                    <td>{% if item.min_price %}€ {{ item.min_price }}{% else %}-{% endif %}</td>
+                    <td>{% if item.max_price %}€ {{ item.max_price }}{% else %}-{% endif %}</td>
+                    <td>{{ item.date_saved|date:"d/m/Y" }}</td>
+                    <td>
+                        <div style="display: flex; gap: 10px;">
+                            <form action="{% url 'search' %}" method="POST" style="display: inline;">
+                                {% csrf_token %}
+                                <input type="hidden" name="query" value="{{ item.query }}">
+                                <button type="submit" class="btn-primary" style="padding: 6px 12px; font-size: 0.8rem;">
+                                    <i class="fa-solid fa-play"></i> Cerca
+                                </button>
+                            </form>
+                            
+                            <form action="{% url 'delete_saved_search' item.id %}" method="POST" style="display: inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn-primary" style="padding: 6px 12px; font-size: 0.8rem; background: rgba(239, 68, 68, 0.2); color: #ef4444;">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" style="text-align: center; padding: 30px;">Nessuna ricerca salvata.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

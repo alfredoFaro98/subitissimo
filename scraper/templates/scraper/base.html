@@ -17,8 +17,14 @@
     </div>
 
     <nav class="navbar">
-        <div class="container">
+        <div class="container" style="display: flex; justify-content: space-between; align-items: center;">
             <a href="{% url 'search' %}" class="logo">Subitissimo <i class="fa-solid fa-bolt"></i></a>
+            
+            <div class="nav-links" style="display: flex; gap: 20px;">
+                <a href="{% url 'favorites' %}" style="color: var(--text-muted); text-decoration: none;"><i class="fa-solid fa-heart"></i> <span class="desktop-only-inline">Preferiti</span></a>
+                <a href="{% url 'saved_searches' %}" style="color: var(--text-muted); text-decoration: none;"><i class="fa-solid fa-bookmark"></i> <span class="desktop-only-inline">Saved</span></a>
+                <a href="{% url 'history' %}" style="color: var(--text-muted); text-decoration: none;"><i class="fa-solid fa-clock-rotate-left"></i> <span class="desktop-only-inline">Storico</span></a>
+            </div>
         </div>
     </nav>
 

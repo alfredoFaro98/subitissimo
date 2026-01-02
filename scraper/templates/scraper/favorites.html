@@ -1,0 +1,156 @@
+{% extends 'scraper/base.html' %}
+
+{% block content %}
+<div class="results-header">
+    <h2 class="search-title" style="font-size: 2rem;">Preferiti ❤️</h2>
+</div>
+
+<!-- Desktop Table -->
+<div class="glass-card desktop-only" style="padding: 0; overflow: hidden;">
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Image</th>
+                    <th>Price</th>
+                    <th>Title</th>
+                    <th>Location</th>
+                    <th>Data Aggiunta</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in favorites %}
+                <tr>
+                    <td>
+                        {% if item.image_url %}
+                        <img src="{{ item.image_url }}" alt="img" class="item-img" referrerpolicy="no-referrer">
+                        {% else %}
+                        <div class="item-img" style="display: flex; align-items: center; justify-content: center; background: #334155;">
+                            <i class="fa-solid fa-image" style="color: #64748b;"></i>
+                        </div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="price-tag">
+                            {% if item.price_num %}
+                                € {{ item.price_num|floatformat:2 }}
+                            {% else %}
+                                {{ item.price_str|default:"-" }}
+                            {% endif %}
+                        </div>
+                    </td>
+                    <td>
+                        <a href="{{ item.url }}" target="_blank" class="item-title">{{ item.title }}</a>
+                    </td>
+                    <td>
+                        <div style="font-weight: 500;">{{ item.town }}</div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted);">{{ item.region }}</div>
+                    </td>
+                    <td>
+                        {{ item.date_added|date:"d/m/Y H:i" }}
+                    </td>
+                    <td>
+                        <button class="btn-primary favorite-btn active" data-id="{{ item.subito_id }}" style="padding: 8px 12px; font-size: 0.9rem;">
+                            <i class="fa-solid fa-heart"></i>
+                        </button>
+                        <a href="{{ item.url }}" target="_blank" class="btn-primary" style="padding: 8px 16px; font-size: 0.9rem; margin-left: 5px;">
+                            View
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" style="text-align: center; padding: 40px;">Nessun preferito salvato.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Mobile List -->
+<div class="mobile-results">
+    {% for item in favorites %}
+    <div class="mobile-card">
+        <div class="mobile-card-row">
+            <div class="mobile-card-img-container">
+                {% if item.image_url %}
+                <img src="{{ item.image_url }}" alt="img" class="mobile-card-img" referrerpolicy="no-referrer">
+                {% else %}
+                <div class="mobile-card-img placeholder">
+                    <i class="fa-solid fa-image"></i>
+                </div>
+                {% endif %}
+            </div>
+            <div class="mobile-card-content">
+                <a href="{{ item.url }}" target="_blank" class="mobile-card-title">{{ item.title }}</a>
+                <div class="mobile-card-price">
+                    {% if item.price_num %}
+                        € {{ item.price_num|floatformat:2 }}
+                    {% else %}
+                        {{ item.price_str|default:"-" }}
+                    {% endif %}
+                </div>
+                <div class="mobile-card-meta">
+                    <span>{{ item.town }} ({{ item.region }})</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="mobile-card-footer">
+            <div style="font-size: 0.8rem; color: var(--text-muted);">
+                Aggiunto il: {{ item.date_added|date:"d/m/y" }}
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <button class="btn-primary favorite-btn active" data-id="{{ item.subito_id }}" style="padding: 6px 12px; font-size: 0.8rem;">
+                    <i class="fa-solid fa-heart"></i>
+                </button>
+                <a href="{{ item.url }}" target="_blank" class="btn-primary" style="padding: 6px 12px; font-size: 0.8rem;">
+                    View
+                </a>
+            </div>
+        </div>
+    </div>
+    {% empty %}
+    <div style="text-align: center; padding: 40px; color: var(--text-muted);">
+        Nessun preferito salvato.
+    </div>
+    {% endfor %}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.favorite-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            const id = btn.dataset.id;
+            // Since this is the favorites page, clicking calls toggle which removes it
+            // Ideally we should remove the row/card from UI
+            
+            try {
+                const response = await fetch("{% url 'toggle_favorite' %}", {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRFToken': '{{ csrf_token }}',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ subito_id: id })
+                });
+                
+                const data = await response.json();
+                if (data.status === 'removed') {
+                    // Remove the row/card
+                    const row = btn.closest('tr');
+                    const card = btn.closest('.mobile-card');
+                    if (row) row.remove();
+                    if (card) card.remove();
+                }
+            } catch (err) {
+                console.error(err);
+                alert('Errore nella rimozione');
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

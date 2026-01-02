@@ -1,11 +1,13 @@
 import json
 from datetime import datetime
 from django.shortcuts import render, redirect, get_object_or_404
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from django.core import serializers
 from .services import run_search
 from .models import GeoCache
 from .cities_data import ITALIAN_CITIES
+
+from .locations import REGIONS, PROVINCES
 
 def search_view(request):
     if request.method == 'POST':
@@ -13,22 +15,37 @@ def search_view(request):
         limit = int(request.POST.get('limit', 35))
         title_only = request.POST.get('title_only') == 'on'
         shippable_only = request.POST.get('shippable_only') == 'on'
+        
+        region = request.POST.get('region')
+        province = request.POST.get('province')
+        
         if query:
-            items_list = run_search(query, limit=limit, title_only=title_only, shippable_only=shippable_only)
+            items_list = run_search(query, limit=limit, title_only=title_only, shippable_only=shippable_only, region=region, province=province)
             
             # Save results to session
             request.session['search_results'] = items_list
             request.session['search_query'] = query
-            request.session['total_results'] = len(items_list) # Simplified count
+            request.session['search_region'] = region
+            request.session['search_province'] = province
+            request.session['search_title_only'] = title_only
+            request.session['search_shippable_only'] = shippable_only
+            request.session['total_results'] = len(items_list)
             
             return redirect('results')
-    return render(request, 'scraper/search.html')
+            
+    context = {
+        'regions': REGIONS,
+        'provinces_json': json.dumps(PROVINCES)
+    }
+    return render(request, 'scraper/search.html', context)
 
 def results_view(request):
     # Get items from session
     items_data = request.session.get('search_results', [])
     query = request.session.get('search_query', 'Unknown')
     total_results = request.session.get('total_results', 0)
+    current_region = request.session.get('search_region')
+    current_province = request.session.get('search_province')
     
     # Process items (restore datetime objects for sorting/filtering/display)
     # We essentially treat them as objects to match template usage as much as possible, 
@@ -53,6 +70,12 @@ def results_view(request):
         processed_items = [i for i in processed_items if i.get('shippable')]
     elif shippable_param == 'false':
         processed_items = [i for i in processed_items if not i.get('shippable')]
+    
+    # Mark favorites
+    favorite_ids = set(Favorite.objects.values_list('subito_id', flat=True))
+    for item in processed_items:
+        if item.get('subito_id') in favorite_ids:
+            item['is_favorite'] = True
     
     # Simple server-side sorting (In-Memory)
     sort_by = request.GET.get('sort')
@@ -84,10 +107,25 @@ def results_view(request):
         def __init__(self, q, count):
             self.query = q
             self.total_results = count
+            # Add existing filters to search object for pre-filling form
+            self.region = request.session.get('search_results', [])[0]['region'] if items_data else None # This is items region, not search query region
+            # Actually we should store parameters in session separately if we want to repopulate form accurately
+            # But let's check run_search session logic
             
+    # Quick fix: extract params from session or request if we stored them
+    # In search_view we saved: request.session['search_query'] = query
+    # We didn't save region/province explicitly in session top level, but they are in the Item dicts if we scraped them
+    # OR we can update search_view to save them.
+    
     context = {
         'search': MockSearch(query, total_results),
         'items': processed_items,
+        'regions': REGIONS,
+        'provinces_json': json.dumps(PROVINCES),
+        'current_region': current_region,
+        'current_province': current_province,
+        'title_only': request.session.get('search_title_only', False),
+        'shippable_only': request.session.get('search_shippable_only', False)
     }
     return render(request, 'scraper/results.html', context)
 
@@ -154,3 +192,80 @@ def map_view(request):
         'items_data_json': json.dumps(json_items) # Pass as string to be used safely
     }
     return render(request, 'scraper/map.html', context)
+
+# Persistence Views
+from .models import SearchQuery, Favorite, SavedSearch
+from django.views.decorators.http import require_POST
+from django.contrib import messages
+
+def history_view(request):
+    searches = SearchQuery.objects.all().order_by('-created_at')
+    return render(request, 'scraper/history.html', {'searches': searches})
+
+def favorites_view(request):
+    favorites = Favorite.objects.all().order_by('-date_added')
+    return render(request, 'scraper/favorites.html', {'favorites': favorites})
+
+def saved_searches_view(request):
+    saved = SavedSearch.objects.all().order_by('-date_saved')
+    return render(request, 'scraper/saved_searches.html', {'saved': saved})
+
+@require_POST
+def toggle_favorite(request):
+    try:
+        data = json.loads(request.body)
+        subito_id = data.get('subito_id')
+        
+        if not subito_id:
+            return JsonResponse({'status': 'error', 'message': 'Missing ID'}, status=400)
+            
+        fav = Favorite.objects.filter(subito_id=subito_id).first()
+        if fav:
+            fav.delete()
+            return JsonResponse({'status': 'removed'})
+        else:
+            # Create new favorite
+            Favorite.objects.create(
+                subito_id=subito_id,
+                title=data.get('title'),
+                price_str=data.get('price_str'),
+                price_num=data.get('price_num') if data.get('price_num') else None,
+                url=data.get('url'),
+                image_url=data.get('image_url'),
+                town=data.get('town'),
+                region=data.get('region')
+            )
+            return JsonResponse({'status': 'added'})
+            
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
+
+@require_POST
+def save_search(request):
+    try:
+        data = json.loads(request.body)
+        query = data.get('query')
+        
+        if not query:
+            return JsonResponse({'status': 'error', 'message': 'Missing query'}, status=400)
+            
+        SavedSearch.objects.create(
+            query=query,
+            min_price=data.get('min_price'),
+            max_price=data.get('max_price'),
+            region=data.get('region'),
+            province=data.get('province')
+        )
+        return JsonResponse({'status': 'ok'})
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
+
+@require_POST
+def delete_history(request, pk):
+    get_object_or_404(SearchQuery, pk=pk).delete()
+    return redirect('history')
+
+@require_POST
+def delete_saved_search(request, pk):
+    get_object_or_404(SavedSearch, pk=pk).delete()
+    return redirect('saved_searches')
