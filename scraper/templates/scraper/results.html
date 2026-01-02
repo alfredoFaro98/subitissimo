@@ -36,33 +36,6 @@
         </a>
         
         <div style="width: 1px; background: rgba(255,255,255,0.1); margin: 0 10px;"></div>
-        
-        <!-- Location Filters -->
-        <form id="location-filter-form" action="{% url 'search' %}" method="POST" style="display: contents;">
-            {% csrf_token %}
-            <input type="hidden" name="query" value="{{ search.query }}">
-            <input type="hidden" name="title_only" value="{% if title_only %}on{% endif %}">
-            <input type="hidden" name="shippable_only" value="{% if shippable_only %}on{% endif %}">
-            
-            <div style="position: relative;">
-                <select name="region" id="res-region-select" class="btn-primary" style="appearance: none; -webkit-appearance: none; padding-right: 35px; background: rgba(30, 41, 59, 0.5); color: var(--text-muted); border: 1px solid var(--border); font-family: inherit;">
-                    <option value="">Regione: Tutto</option>
-                    {% for slug, name in regions %}
-                    <option value="{{ slug }}" {% if current_region == slug %}selected{% endif %}>{{ name }}</option>
-                    {% endfor %}
-                </select>
-                <i class="fa-solid fa-chevron-down" style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-muted); font-size: 0.8rem;"></i>
-            </div>
-
-            <div style="position: relative;">
-                <select name="province" id="res-province-select" class="btn-primary" style="appearance: none; -webkit-appearance: none; padding-right: 35px; background: rgba(30, 41, 59, 0.5); color: var(--text-muted); border: 1px solid var(--border); font-family: inherit;" {% if not current_region %}disabled{% endif %}>
-                    <option value="">Provincia: Tutte</option>
-                </select>
-                <i class="fa-solid fa-chevron-down" style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-muted); font-size: 0.8rem;"></i>
-            </div>
-        </form>
-
-        <div style="width: 1px; background: rgba(255,255,255,0.1); margin: 0 10px;"></div>
 
         <!-- All Results Filter -->
         <a href="?sort={{ request.GET.sort }}" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; {% if not request.GET.shippable %}background: var(--primary);{% else %}background: rgba(30, 41, 59, 0.5); color: var(--text-muted);{% endif %}">
@@ -388,86 +361,7 @@
         }
     });
     
-    // Results Page Location Filter Logic
-    const provincesData = {{ provinces_json|safe }};
-    const resRegionSelect = document.getElementById('res-region-select');
-    const resProvinceSelect = document.getElementById('res-province-select');
-    const currentProv = "{{ current_province|default:'' }}";
-    const filterForm = document.getElementById('location-filter-form');
-
-    if (resRegionSelect) {
-        // Init provinces if region selected
-        function updateProvinces(triggerSubmit = false) {
-            const region = resRegionSelect.value;
-            
-            // Save current selection if we are just initing
-            const selectedProv = resProvinceSelect.value || currentProv;
-            
-            resProvinceSelect.innerHTML = '<option value="">Provincia: Tutte</option>';
-            resProvinceSelect.disabled = !region;
-            
-            // Update styling to active if selected
-            if (region) {
-                 resRegionSelect.style.background = 'var(--primary)';
-                 resRegionSelect.style.color = 'white';
-                 resRegionSelect.nextElementSibling.style.color = 'white';
-            } else {
-                 resRegionSelect.style.background = 'rgba(30, 41, 59, 0.5)';
-                 resRegionSelect.style.color = 'var(--text-muted)';
-                 resRegionSelect.nextElementSibling.style.color = 'var(--text-muted)';
-            }
-            
-            if (region && provincesData[region]) {
-                provincesData[region].forEach(p => {
-                    const option = document.createElement('option');
-                    option.value = p[0];
-                    option.textContent = p[1];
-                    if (p[0] === selectedProv) {
-                        option.selected = true;
-                    }
-                    resProvinceSelect.appendChild(option);
-                });
-            }
-            
-            if (triggerSubmit) {
-                 // If region changed to empty, submit. If changed to something else, wait for province? 
-                 // Actually user might want search whole region. So submit.
-                 // But wait, if they want to select province, we shouldn't submit immediately?
-                 // No, usually filters apply on change. If I reload, province selection is lost unless I persist it through session (which I do).
-                 // But if I reload page, I lose the ability to select province immediately without another reload.
-                 // Better UX: change region -> valid provinces load -> user selects province -> submit.
-                 // OR: change region -> submit.
-                 
-                 // If we submit on region change, page reloads, filtered by region. Then user selects province -> submit again.
-                 filterForm.submit();
-            }
-            
-            // Province styling
-            if (resProvinceSelect.value) {
-                 resProvinceSelect.style.background = 'var(--primary)';
-                 resProvinceSelect.style.color = 'white';
-                 resProvinceSelect.nextElementSibling.style.color = 'white';
-            } else {
-                 resProvinceSelect.style.background = 'rgba(30, 41, 59, 0.5)';
-                 resProvinceSelect.style.color = 'var(--text-muted)';
-                 resProvinceSelect.nextElementSibling.style.color = 'var(--text-muted)';
-            }
-        }
-
-        resRegionSelect.addEventListener('change', function() {
-             // On region change, we just submit. 
-             // Implementing "wait for province" is tricky without AJAX or a dedicated "Apply" button.
-             // Given the request "like existing filters" (which are links that reload), auto-reload is expected.
-             filterForm.submit();
-        });
-        
-        resProvinceSelect.addEventListener('change', function() {
-             filterForm.submit();
-        });
-        
-        // Initial load
-        updateProvinces(false);
-    }
+    // Favorites & Saved Search Logic
     document.addEventListener('DOMContentLoaded', () => {
         // Toggle Favorite
         document.querySelectorAll('.favorite-btn').forEach(btn => {

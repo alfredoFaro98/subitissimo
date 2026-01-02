@@ -2,7 +2,7 @@ import time
 import json
 import re
 from typing import Any, Dict, List, Optional
-from urllib.parse import quote_plus, urlparse, parse_qs
+from urllib.parse import quote_plus
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 from .models import SearchQuery # Re-enabled for History
@@ -99,38 +99,17 @@ def first_image_url_browser(ad: Dict[str, Any]) -> str:
         url += "?rule=gallery-desktop-1x-auto"
     return url
 
-    if url and "?" not in url:
-        url += "?rule=gallery-desktop-1x-auto"
-    return url
-
-def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_only: bool = False, region: str = None, province: str = None, max_pages: int = 200, sleep: float = 0.25) -> List[Dict[str, Any]]:
-    # Construct base URL
-    base_segment = "annunci-italia"
-    if region:
-        base_segment = f"annunci-{region}"
-    
-    path_segment = "vendita"
-    if province:
-        path_segment = f"vendita/{province}"
-    
-    # Example: https://www.subito.it/annunci-lazio/vendita/roma/?q=...
-    search_url = f"{BASE_SITE}/{base_segment}/{path_segment}/?q={quote_plus(query)}"
-    
+def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_only: bool = False, max_pages: int = 200, sleep: float = 0.25) -> List[Dict[str, Any]]:
+    q_url = quote_plus(query)
+    search_url = SEARCH_TEMPLATE.format(q=q_url)
     if title_only:
         search_url += "&qso=true"
     if shippable_only:
-        search_url += "&sh=true"
+        search_url += "&sh=true"  # Subito parameter for shipping
     
     # Save search history
     total_count = 0 
-    search_obj = SearchQuery.objects.create(
-        query=query, 
-        limit=limit, 
-        title_only=title_only, 
-        shippable_only=shippable_only,
-        region=region,
-        province=province
-    )
+    search_obj = SearchQuery.objects.create(query=query, limit=limit, title_only=title_only, shippable_only=shippable_only)
     
     all_ads: List[Dict[str, Any]] = []
     seen = set()
@@ -139,77 +118,59 @@ def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_
     with sync_playwright() as p:
         # Use headless=True for backend service
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            locale="it-IT",
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
+        context = browser.new_context(locale="it-IT")
         page = context.new_page()
 
         try:
-            # First hit homepage to warm up
-            try:
-                page.goto(BASE_SITE, wait_until="domcontentloaded", timeout=15000)
-            except:
-                pass
+            page.goto(BASE_SITE, wait_until="networkidle", timeout=60000)
+            time.sleep(1.0)
+            page.goto(search_url, wait_until="networkidle", timeout=60000)
+            time.sleep(1.5)
+            
+            # Cookies should be set now
+            
+            params0 = {"q": query, "start": 0, "lim": limit, "sort": "datedesc"}
+            if title_only:
+                params0["qso"] = "true"
+            if shippable_only:
+                params0["sh"] = "true"
 
-            # Prepare to capture the Hades API call that the frontend makes
-            # This allows us to get the correct Region/City IDs without knowing them
-            with page.expect_response(lambda r: "hades.subito.it" in r.url and "/items" in r.url and r.status == 200) as response_info:
-                page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
+            resp0 = context.request.get(HADES_URL, params=params0, timeout=60000)
             
-            # Get the captured response
-            api_response = response_info.value
-            first = api_response.json()
-            
-            # Extract the correct parameters (including region IDs) from the intercepted URL
-            parsed_api_url = urlparse(api_response.url)
-            captured_params = parse_qs(parsed_api_url.query)
-            
-            # Convert list values to single values (taking the first one)
-            # This gives us the base parameters for pagination
-            base_params = {k: v[0] for k, v in captured_params.items()}
-            
-            items0 = pick_items(first)
-            total_count = int(first.get("count_all") or 0)
-            
-            # Helper to add ads
-            def add_ads_local(items):
-                for ad in items or []:
-                    urn = ad.get("urn") or normalize_url(ad)
-                    if urn and urn in seen:
+            if resp0.ok:
+                first = resp0.json()
+                items0 = pick_items(first)
+                total_count = int(first.get("count_all") or 0)
+                
+                # Helper to add ads
+                def add_ads_local(items):
+                    for ad in items or []:
+                        urn = ad.get("urn") or normalize_url(ad)
+                        if urn and urn in seen:
+                            continue
+                        if urn:
+                            seen.add(urn)
+                        all_ads.append(ad)
+                
+                add_ads_local(items0)
+                
+                pages = (total_count + limit - 1) // limit if total_count > 0 else 0
+                pages = min(pages, max_pages)
+                
+                for i in range(1, pages):
+                    start = i * limit
+                    params = {"q": query, "start": start, "lim": limit, "sort": "datedesc"}
+                    if title_only:
+                        params["qso"] = "true"
+                    if shippable_only:
+                        params["sh"] = "true"
+                        
+                    r = context.request.get(HADES_URL, params=params, timeout=60000)
+                    if not r.ok:
                         continue
-                    if urn:
-                        seen.add(urn)
-                    all_ads.append(ad)
-            
-            add_ads_local(items0)
-            
-            pages = (total_count + limit - 1) // limit if total_count > 0 else 0
-            pages = min(pages, max_pages)
-            
-            for i in range(1, pages):
-                start = i * limit
-                
-                # Update params for next page
-                params = base_params.copy()
-                params["start"] = str(start)
-                params["lim"] = str(limit)
-                
-                # Ensure we strictly follow our sorting/filtering override if needed, 
-                # but usually the captured params already contain them if search_url was correct.
-                # However, title_only and shippable_only in search_url rely on Subito mapping qso/sh correctly.
-                # Let's enforce them just in case.
-                if title_only:
-                    params["qso"] = "true"
-                if shippable_only:
-                    params["sh"] = "true"
-                    
-                r = context.request.get(HADES_URL, params=params, timeout=60000)
-                if not r.ok:
-                    continue
-                payload = r.json()
-                add_ads_local(pick_items(payload))
-                time.sleep(sleep)
+                    payload = r.json()
+                    add_ads_local(pick_items(payload))
+                    time.sleep(sleep)
                     
         finally:
             browser.close()

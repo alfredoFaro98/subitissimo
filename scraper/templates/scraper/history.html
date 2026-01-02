@@ -24,11 +24,6 @@
                     <td>
                         {% if search.title_only %}<span class="badge">Title Only</span>{% endif %}
                         {% if search.shippable_only %}<span class="badge badge-shipping">Shippable</span>{% endif %}
-                        {% if search.region %}
-                            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">
-                                <i class="fa-solid fa-location-dot"></i> {{ search.region }}{% if search.province %}/{{ search.province }}{% endif %}
-                            </div>
-                        {% endif %}
                     </td>
                     <td>
                         <div style="display: flex; gap: 10px;">
@@ -37,8 +32,6 @@
                                 <input type="hidden" name="query" value="{{ search.query }}">
                                 <input type="hidden" name="title_only" value="{% if search.title_only %}on{% endif %}">
                                 <input type="hidden" name="shippable_only" value="{% if search.shippable_only %}on{% endif %}">
-                                <input type="hidden" name="region" value="{{ search.region|default:'' }}">
-                                <input type="hidden" name="province" value="{{ search.province|default:'' }}">
                                 <button type="submit" class="btn-primary" style="padding: 6px 12px; font-size: 0.8rem;">
                                     <i class="fa-solid fa-rotate-right"></i> Rilancia
                                 </button>

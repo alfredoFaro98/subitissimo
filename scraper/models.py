@@ -5,8 +5,6 @@ class SearchQuery(models.Model):
     limit = models.IntegerField(default=35)
     title_only = models.BooleanField(default=False)
     shippable_only = models.BooleanField(default=False)
-    region = models.CharField(max_length=100, blank=True, null=True)
-    province = models.CharField(max_length=100, blank=True, null=True)
     total_results = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     
@@ -75,8 +73,6 @@ class SavedSearch(models.Model):
     query = models.CharField(max_length=255)
     min_price = models.FloatField(blank=True, null=True)
     max_price = models.FloatField(blank=True, null=True)
-    region = models.CharField(max_length=100, blank=True, null=True)
-    province = models.CharField(max_length=100, blank=True, null=True)
     date_saved = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

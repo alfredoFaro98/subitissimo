@@ -9,21 +9,8 @@
         {% csrf_token %}
         <div class="form-group">
             <input type="text" name="query" class="form-input" placeholder="What are you looking for?" required autofocus>
-        <div class="form-group" style="display: flex; gap: 15px; margin-bottom: 20px;">
-            <select name="region" id="region-select" class="form-input" style="flex: 1;">
-                <option value="">Tutta Italia</option>
-                {% for slug, name in regions %}
-                <option value="{{ slug }}">{{ name }}</option>
-                {% endfor %}
-            </select>
-            
-            <select name="province" id="province-select" class="form-input" style="flex: 1;" disabled>
-                <option value="">Tutte le province</option>
-            </select>
-        </div>
-
         <div class="form-group" style="display: flex; gap: 20px; align-items: center; margin-bottom: 15px;">
-            <label style="display: flex; align-items: center; gap: 8px; color: var(--text-muted); cursor: pointer;">
+             <label style="display: flex; align-items: center; gap: 8px; color: var(--text-muted); cursor: pointer;">
                 <input type="checkbox" name="title_only" style="width: auto; margin: 0;">
                 <span>Title Only</span>
             </label>
@@ -49,27 +36,6 @@
 </div>
 
 <script>
-    const provincesData = {{ provinces_json|safe }};
-    const regionSelect = document.getElementById('region-select');
-    const provinceSelect = document.getElementById('province-select');
-
-    regionSelect.addEventListener('change', function() {
-        const region = this.value;
-        
-        // Reset province
-        provinceSelect.innerHTML = '<option value="">Tutte le province</option>';
-        provinceSelect.disabled = !region;
-        
-        if (region && provincesData[region]) {
-            provincesData[region].forEach(p => {
-                const option = document.createElement('option');
-                option.value = p[0];
-                option.textContent = p[1];
-                provinceSelect.appendChild(option);
-            });
-        }
-    });
-
 document.querySelector('.search-form').addEventListener('submit', function(e) {
     document.body.classList.add('loading');
     document.getElementById('loadingText').style.display = 'block';
