@@ -9,10 +9,14 @@
         {% csrf_token %}
         <div class="form-group">
             <input type="text" name="query" class="form-input" placeholder="What are you looking for?" required autofocus>
-        <div class="form-group" style="display: flex; gap: 10px; align-items: center; margin-bottom: 15px;">
+        <div class="form-group" style="display: flex; gap: 20px; align-items: center; margin-bottom: 15px;">
              <label style="display: flex; align-items: center; gap: 8px; color: var(--text-muted); cursor: pointer;">
                 <input type="checkbox" name="title_only" style="width: auto; margin: 0;">
-                <span>Cerca solo nel titolo</span>
+                <span>Title Only</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; color: var(--text-muted); cursor: pointer;">
+                <input type="checkbox" name="shippable_only" style="width: auto; margin: 0;">
+                <span>Spedizione Disponibile</span>
             </label>
         </div>
         

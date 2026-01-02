@@ -9,6 +9,7 @@
         </div>
     </div>
     <div style="display: flex; gap: 10px;">
+        <a href="{% url 'results_map' search.id %}" class="btn-primary" style="background: var(--primary); color: white;">View on Map <i class="fa-solid fa-map-location-dot"></i></a>
         <a href="{% url 'search' %}" class="btn-primary" style="background: transparent; border: 1px solid var(--border);">New Search</a>
     </div>
 </div>
@@ -28,6 +29,28 @@
         <a href="?sort=date_asc" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; {% if request.GET.sort == 'date_asc' %}background: var(--primary);{% else %}background: rgba(30, 41, 59, 0.5); color: var(--text-muted);{% endif %}">
             Oldest <i class="fa-regular fa-clock"></i>
         </a>
+        
+        <!-- Shipping Filter Toggle -->
+        {% if request.GET.shippable == 'true' %}
+            <a href="?sort={{ request.GET.sort }}" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; background: var(--primary);">
+                Shippable Only <i class="fa-solid fa-check"></i>
+            </a>
+        {% else %}
+            <a href="?sort={{ request.GET.sort }}&shippable=true" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; background: rgba(30, 41, 59, 0.5); color: var(--text-muted);">
+                Shippable Only <i class="fa-solid fa-truck"></i>
+            </a>
+        {% endif %}
+
+        <!-- No Shipping Filter -->
+        {% if request.GET.shippable == 'false' %}
+            <a href="?sort={{ request.GET.sort }}" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; background: var(--primary);">
+                No Shipping <i class="fa-solid fa-check"></i>
+            </a>
+        {% else %}
+            <a href="?sort={{ request.GET.sort }}&shippable=false" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; background: rgba(30, 41, 59, 0.5); color: var(--text-muted);">
+                No Shipping <i class="fa-solid fa-handshake"></i>
+            </a>
+        {% endif %}
     </div>
 </div>
 

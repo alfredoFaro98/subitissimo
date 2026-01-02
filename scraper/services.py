@@ -99,13 +99,15 @@ def first_image_url_browser(ad: Dict[str, Any]) -> str:
         url += "?rule=gallery-desktop-1x-auto"
     return url
 
-def run_search(query: str, limit: int = 35, title_only: bool = False, max_pages: int = 200, sleep: float = 0.25) -> SearchQuery:
+def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_only: bool = False, max_pages: int = 200, sleep: float = 0.25) -> SearchQuery:
     q_url = quote_plus(query)
     search_url = SEARCH_TEMPLATE.format(q=q_url)
     if title_only:
         search_url += "&qso=true"
+    if shippable_only:
+        search_url += "&sh=true"  # Subito parameter for shipping
     
-    search_obj = SearchQuery.objects.create(query=query, limit=limit, title_only=title_only)
+    search_obj = SearchQuery.objects.create(query=query, limit=limit, title_only=title_only, shippable_only=shippable_only)
     
     all_ads: List[Dict[str, Any]] = []
     seen = set()
@@ -128,6 +130,8 @@ def run_search(query: str, limit: int = 35, title_only: bool = False, max_pages:
             params0 = {"q": query, "start": 0, "lim": limit, "sort": "datedesc"}
             if title_only:
                 params0["qso"] = "true"
+            if shippable_only:
+                params0["sh"] = "true"
 
             resp0 = context.request.get(HADES_URL, params=params0, timeout=60000)
             
@@ -156,6 +160,9 @@ def run_search(query: str, limit: int = 35, title_only: bool = False, max_pages:
                     params = {"q": query, "start": start, "lim": limit, "sort": "datedesc"}
                     if title_only:
                         params["qso"] = "true"
+                    if shippable_only:
+                        params["sh"] = "true"
+                        
                     r = context.request.get(HADES_URL, params=params, timeout=60000)
                     if not r.ok:
                         continue
@@ -209,7 +216,18 @@ def run_search(query: str, limit: int = 35, title_only: bool = False, max_pages:
         # Fallback: if we have a shipping cost, it is shippable
         if costo_sped_num is not None:
             spedibile = True
-
+            
+        # Try to find likes/favorites in raw payload 
+        # (It is usually NOT present in list API, but let's look for "favorites", "likes", "stats")
+        likes_val = 0
+        # Common places: ad.get('favorites'), ad.get('stats', {}).get('favorites')
+        # Based on user request/hope. Realistically might need detail page scraping.
+        if "favorites" in ad:
+             try:
+                 likes_val = int(ad["favorites"])
+             except:
+                 pass
+        
         url = normalize_url(ad)
         img_url = first_image_url_browser(ad)
         
@@ -229,6 +247,7 @@ def run_search(query: str, limit: int = 35, title_only: bool = False, max_pages:
             shipping_type=spedizione_tipo,
             shipping_cost=costo_sped_num,
             shippable=spedibile,
+            likes_count=likes_val,
             image_url=img_url,
             url=url
         )

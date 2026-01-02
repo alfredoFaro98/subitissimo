@@ -4,6 +4,7 @@ class SearchQuery(models.Model):
     query = models.CharField(max_length=255)
     limit = models.IntegerField(default=35)
     title_only = models.BooleanField(default=False)
+    shippable_only = models.BooleanField(default=False)
     total_results = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     
@@ -33,6 +34,7 @@ class Item(models.Model):
     shipping_type = models.CharField(max_length=50, blank=True, null=True)
     shipping_cost = models.FloatField(blank=True, null=True)
     shippable = models.BooleanField(default=False)
+    likes_count = models.IntegerField(default=0, blank=True, null=True)
     
     # Media
     image_url = models.URLField(max_length=1000, blank=True, null=True)
@@ -43,3 +45,12 @@ class Item(models.Model):
 
     def __str__(self):
         return self.title
+
+class GeoCache(models.Model):
+    location_key = models.CharField(max_length=255, unique=True, db_index=True)
+    latitude = models.FloatField()
+    longitude = models.FloatField()
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.location_key} ({self.latitude}, {self.longitude})"
