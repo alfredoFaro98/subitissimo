@@ -3,13 +3,13 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote_plus
-from playwright.sync_api import sync_playwright
-from django.utils import timezone
 from datetime import datetime
-from .models import Item, SearchQuery
+from playwright.sync_api import sync_playwright
+# from .models import SearchQuery, Item # Removed for in-memory approach
 
+BASE_SITE = "https://www.subito.it"
 HADES_URL = "https://hades.subito.it/v1/search/items"
-BASE_SITE = "https://www.subito.it/"
+
 SEARCH_TEMPLATE = "https://www.subito.it/annunci-italia/vendita/?q={q}"
 
 def safe_get(d: Dict[str, Any], path: str, default=None):
@@ -99,7 +99,7 @@ def first_image_url_browser(ad: Dict[str, Any]) -> str:
         url += "?rule=gallery-desktop-1x-auto"
     return url
 
-def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_only: bool = False, max_pages: int = 200, sleep: float = 0.25) -> SearchQuery:
+def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_only: bool = False, max_pages: int = 200, sleep: float = 0.25) -> List[Dict[str, Any]]:
     q_url = quote_plus(query)
     search_url = SEARCH_TEMPLATE.format(q=q_url)
     if title_only:
@@ -107,7 +107,7 @@ def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_
     if shippable_only:
         search_url += "&sh=true"  # Subito parameter for shipping
     
-    search_obj = SearchQuery.objects.create(query=query, limit=limit, title_only=title_only, shippable_only=shippable_only)
+    # search_obj = SearchQuery.objects.create(query=query, limit=limit, title_only=title_only, shippable_only=shippable_only)
     
     all_ads: List[Dict[str, Any]] = []
     seen = set()
@@ -174,11 +174,11 @@ def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_
             browser.close()
 
     # Update total results
-    search_obj.total_results = total_count
-    search_obj.save()
+    # search_obj.total_results = total_count
+    # search_obj.save()
 
-    # Save Items to DB
-    items_to_create = []
+    # Create Items list (dicts)
+    items_list = []
     for ad in all_ads:
         id_annuncio = ad.get("urn") or ""
         nome = ad.get("subject") or ad.get("title") or ""
@@ -189,15 +189,7 @@ def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_
         data_pub = safe_get(ad, "dates.display", "")
         # Parse ISO date
         data_pub_iso_str = safe_get(ad, "dates.display_iso8601", "")
-        data_pub_iso = None
-        if data_pub_iso_str:
-            try:
-                # Subito often sends: "2023-10-27T10:00:00+02:00"
-                data_pub_iso = datetime.fromisoformat(data_pub_iso_str)
-            except ValueError:
-                pass
-
-        data_scadenza_raw = safe_get(ad, "dates.expiration_iso8601", "")
+        # Maintain ISO string for session storage, can parse later
         
         categoria = safe_get(ad, "category.value", "")
         regione = safe_get(ad, "geo.region.value", "")
@@ -218,10 +210,7 @@ def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_
             spedibile = True
             
         # Try to find likes/favorites in raw payload 
-        # (It is usually NOT present in list API, but let's look for "favorites", "likes", "stats")
         likes_val = 0
-        # Common places: ad.get('favorites'), ad.get('stats', {}).get('favorites')
-        # Based on user request/hope. Realistically might need detail page scraping.
         if "favorites" in ad:
              try:
                  likes_val = int(ad["favorites"])
@@ -231,27 +220,25 @@ def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_
         url = normalize_url(ad)
         img_url = first_image_url_browser(ad)
         
-        item = Item(
-            search_query=search_obj,
-            subito_id=id_annuncio,
-            title=nome,
-            price_str=prezzo_str,
-            price_num=prezzo_num,
-            date_pub=data_pub,
-            date_pub_iso=data_pub_iso,
-            category=categoria,
-            region=regione,
-            province=provincia,
-            town=comune,
-            condition=condizione,
-            shipping_type=spedizione_tipo,
-            shipping_cost=costo_sped_num,
-            shippable=spedibile,
-            likes_count=likes_val,
-            image_url=img_url,
-            url=url
-        )
-        items_to_create.append(item)
-    
-    Item.objects.bulk_create(items_to_create)
-    return search_obj
+        item_dict = {
+            'subito_id': id_annuncio,
+            'title': nome,
+            'price_str': prezzo_str,
+            'price_num': prezzo_num,
+            'date_pub': data_pub,
+            'date_pub_iso': data_pub_iso_str, # Store as string
+            'category': categoria,
+            'region': regione,
+            'province': provincia,
+            'town': comune,
+            'condition': condizione,
+            'shipping_type': spedizione_tipo,
+            'shipping_cost': costo_sped_num,
+            'shippable': spedibile,
+            'likes_count': likes_val,
+            'image_url': img_url,
+            'url': url
+        }
+        items_list.append(item_dict)
+
+    return items_list

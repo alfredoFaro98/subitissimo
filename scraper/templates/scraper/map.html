@@ -2,9 +2,11 @@
 
 {% block content %}
 <div class="container mt-4">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h2>Mappa Risultati: {{ search.query }}</h2>
-        <a href="{% url 'results' search.id %}" class="btn btn-secondary">Torna alla lista</a>
+    <div class="header">
+        <a href="{% url 'results' %}" class="back-btn">
+            <i class="fa-solid fa-arrow-left"></i> Back to Results
+        </a>
+        <div class="logo">Subitissimo Map</div>
     </div>
 
     <div id="map" style="height: 600px; width: 100%; border-radius: 8px;"></div>
@@ -29,167 +31,47 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    // 1. Initialize Map (Center on Italy roughly)
+    // 1. Initialize Map
     var map = L.map('map').setView([41.8719, 12.5674], 6);
 
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    L.tileLayer('https://try.maps.overturemaps.org/tiles/2d-light/{z}/{x}/{y}.png', {
         maxZoom: 19,
-        attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        attribution: '&copy; Overture Maps'
     }).addTo(map);
+    // Alternatively fallback to OSM if Overture is slow/broken for you:
+    // L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { ... }).addTo(map);
 
-    // 2. Get Items
+    // 2. Get Items from JSON Island
     var items = JSON.parse(document.getElementById('items-data').textContent);
     
-    // Group items by unique location string to avoid redundant geocoding
-    // Location key: "Comune, Provincia, Region" (or just Commune/Province as available)
-    var locationGroups = {};
+    // 3. Add Markers
+    var markers = L.markerClusterGroup ? L.markerClusterGroup() : L.layerGroup();
     
-    // Items already geocoded server-side
-    var preGeocodedCount = 0;
+    var bounds = L.latLngBounds();
+    var foundMarkers = 0;
 
     items.forEach(function(item) {
-        // Did server provide coords?
         if (item.lat && item.lon) {
-            addMarker(item.lat, item.lon, [item]); // Note: grouping logic below is for client-side mainly
-             // Ideally we should group server-side hits too to cluster popup
-             // Let's defer that to a simple loop.
-             // Actually, to keep grouping consistent, let's group by lat,lon key
-             var key = item.lat + "," + item.lon;
-             if (!locationGroups[key]) {
-                 locationGroups[key] = {
-                     lat: item.lat,
-                     lon: item.lon,
-                     items: []
-                 };
-             }
-             locationGroups[key].items.push(item);
-             preGeocodedCount++;
-             return;
-        }
-
-        var town = item.fields.town || "";
-        var prov = item.fields.province || "";
-        var region = item.fields.region || "";
-        
-        // Clean up
-        town = town.trim();
-        prov = prov.trim();
-        
-        if (!town && !prov) return; // Skip if no location info
-        
-        // Construct query string for Nominatim
-        // We prefer "Town, Province"
-        var locKey = "";
-        if (town) locKey += town;
-        if (prov) locKey += (locKey ? ", " : "") + prov;
-        
-        // Add italy to context
-        var query = locKey + ", Italia";
-        
-        // Use query string as key for client-side pending
-        if (!locationGroups[query]) {
-            locationGroups[query] = { query: query, items: [], pending: true };
-        }
-        locationGroups[query].items.push(item);
-    });
-
-    // Add markers for pre-geocoded
-    Object.keys(locationGroups).forEach(key => {
-        var group = locationGroups[key];
-        if (!group.pending && group.lat) {
-             addMarker(group.lat, group.lon, group.items);
+            var marker = L.marker([item.lat, item.lon]);
+            
+            var content = `<b>${item.title}</b><br/>`;
+            content += `Prezzo: € ${item.price || '-'}<br/>`;
+            if (item.image_url) {
+                content += `<img src="${item.image_url}" style="max-width:100px; margin-top:5px; border-radius:4px;"><br/>`;
+            }
+            content += `<a href="${item.url}" target="_blank" style="display:inline-block; margin-top:5px; color:var(--primary);">Vedi su Subito</a>`;
+            
+            marker.bindPopup(content);
+            markers.addLayer(marker);
+            bounds.extend([item.lat, item.lon]);
+            foundMarkers++;
         }
     });
 
-    // Filter for pending only
-    var queries = Object.keys(locationGroups).filter(k => locationGroups[k].pending);
-    
-    if (queries.length === 0) {
-        document.getElementById('loading-geo').style.display = 'none';
-        return;
+    if (foundMarkers > 0) {
+        map.addLayer(markers);
+        map.fitBounds(bounds, {padding: [50, 50]});
     }
-
-    var loadingDiv = document.getElementById('loading-geo');
-    var progressSpan = document.getElementById('geo-progress');
-    loadingDiv.style.display = 'block';
-    
-    // Cache for this session
-    var geoCache = {}; 
-    
-    // 3. Geocoding Function with Rate Limiting
-    // Nominatim usage policy: Max 1 request per second.
-    
-    let processed = 0;
-    
-    async function processGeocoding() {
-        for (const query of queries) {
-            // Check cache (simple object cache for now)
-            // Ideally we should use localStorage or DB, but for this task we do client side.
-            
-            let lat, lon;
-            
-            try {
-                // Fetch from Nominatim
-                // Encode
-                const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`;
-                
-                const response = await fetch(url, {
-                    headers: {
-                        'User-Agent': 'SubitissimoScraper/1.0' // App name required
-                    }
-                });
-                
-                const data = await response.json();
-                
-                if (data && data.length > 0) {
-                    lat = data[0].lat;
-                    lon = data[0].lon;
-                    
-                    // Add Marker
-                    addMarker(lat, lon, locationGroups[query].items);
-                }
-                
-            } catch (e) {
-                console.error("Geocoding error for " + query, e);
-            }
-            
-            processed += locationGroups[query].items.length;
-            progressSpan.textContent = processed;
-            
-            // Wait 1.1s to respect rate limit
-            await new Promise(r => setTimeout(r, 1100));
-        }
-        
-        loadingDiv.style.display = 'none';
-    }
-    
-    function addMarker(lat, lon, itemList) {
-        // Create popup content
-        // If 1 item, show details. If multiple, show list.
-        
-        let content = `<div style="max-height: 200px; overflow-y: auto;">`;
-        if (itemList.length > 1) {
-            content += `<strong>${itemList.length} Risultati qui:</strong><ul style="padding-left: 20px;">`;
-            itemList.forEach(item => {
-                content += `<li><a href="${item.fields.url}" target="_blank">${item.fields.title}</a> - <b>${item.fields.price_str || 'N/A'}</b></li>`;
-            });
-            content += `</ul>`;
-        } else {
-            const item = itemList[0];
-            content += `<b>${item.fields.title}</b><br/>`;
-            content += `Prezzo: ${item.fields.price_str || 'N/A'}<br/>`;
-            if (item.fields.image_url) {
-                content += `<img src="${item.fields.image_url}" style="max-width:100px; margin-top:5px;"><br/>`;
-            }
-            content += `<a href="${item.fields.url}" target="_blank">Vedi su Subito</a>`;
-        }
-        content += `</div>`;
-        
-        L.marker([lat, lon]).addTo(map)
-            .bindPopup(content);
-    }
-    
-    processGeocoding();
 });
 </script>
 {% endblock %}

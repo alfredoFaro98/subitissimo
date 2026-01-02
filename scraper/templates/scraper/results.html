@@ -1,18 +1,18 @@
 {% extends 'scraper/base.html' %}
 
 {% block content %}
-<div class="results-header">
-    <div>
-        <h2 style="font-size: 2rem;">Results for "{{ search.query }}"</h2>
-        <div style="margin-top: 5px; color: var(--text-muted); font-size: 0.95rem;">
-            <span style="color: var(--primary); font-weight: 600;">{{ search.total_results }}</span> items found
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <div style="color: var(--text-muted);">
+            Found <span style="color: var(--primary); font-weight: 600;">{{ search.total_results }}</span> results for "{{ search.query }}"
+        </div>
+        
+        <div style="display: flex; gap: 15px;">
+            <a href="{% url 'map_view' %}" class="btn-primary" style="background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(255, 255, 255, 0.1); padding: 8px 16px; font-size: 0.9rem;">
+                <i class="fa-solid fa-map"></i> View on Map
+            </a>
+            <a href="{% url 'search' %}" class="btn-primary" style="padding: 8px 16px; font-size: 0.9rem;">New Search</a>
         </div>
     </div>
-    <div style="display: flex; gap: 10px;">
-        <a href="{% url 'results_map' search.id %}" class="btn-primary" style="background: var(--primary); color: white;">View on Map <i class="fa-solid fa-map-location-dot"></i></a>
-        <a href="{% url 'search' %}" class="btn-primary" style="background: transparent; border: 1px solid var(--border);">New Search</a>
-    </div>
-</div>
 
 <div class="glass-card" style="margin-bottom: 20px; padding: 20px; display: flex; align-items: center; justify-content: space-between;">
     <div style="font-weight: 600; color: var(--text-muted);">Sort By:</div>
@@ -97,6 +97,11 @@
                     </td>
                     <td>
                         <div style="font-size: 0.9rem;">{{ item.date_pub }}</div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted);">
+                            {% if item.date_pub_iso %}
+                                {{ item.date_pub_iso|timesince }} fa
+                            {% endif %}
+                        </div>
                     </td>
                     <td>
                         {% if item.shippable %}
