@@ -99,7 +99,7 @@ def first_image_url_browser(ad: Dict[str, Any]) -> str:
         url += "?rule=gallery-desktop-1x-auto"
     return url
 
-def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_only: bool = False, max_pages: int = 200, sleep: float = 0.25) -> List[Dict[str, Any]]:
+def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_only: bool = False, category: str = "", max_pages: int = 200, sleep: float = 0.25) -> List[Dict[str, Any]]:
     q_url = quote_plus(query)
     search_url = SEARCH_TEMPLATE.format(q=q_url)
     if title_only:
@@ -109,7 +109,7 @@ def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_
     
     # Save search history
     total_count = 0 
-    search_obj = SearchQuery.objects.create(query=query, limit=limit, title_only=title_only, shippable_only=shippable_only)
+    search_obj = SearchQuery.objects.create(query=query, limit=limit, title_only=title_only, shippable_only=shippable_only, category=category)
     
     all_ads: List[Dict[str, Any]] = []
     seen = set()
@@ -134,6 +134,8 @@ def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_
                 params0["qso"] = "true"
             if shippable_only:
                 params0["sh"] = "true"
+            if category:
+                params0["c"] = category
 
             resp0 = context.request.get(HADES_URL, params=params0, timeout=60000)
             
@@ -164,8 +166,13 @@ def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_
                         params["qso"] = "true"
                     if shippable_only:
                         params["sh"] = "true"
+                    if category:
+                        params["c"] = category
                         
-                    r = context.request.get(HADES_URL, params=params, timeout=60000)
+                    try:
+                        r = context.request.get(HADES_URL, params=params, timeout=60000)
+                    except Exception:
+                        continue
                     if not r.ok:
                         continue
                     payload = r.json()
@@ -195,6 +202,7 @@ def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_
         # Maintain ISO string for session storage, can parse later
         
         categoria = safe_get(ad, "category.value", "")
+        categoria_key = safe_get(ad, "category.key", "")
         regione = safe_get(ad, "geo.region.value", "")
         provincia = safe_get(ad, "geo.city.value", "")
         comune = safe_get(ad, "geo.town.value", "")
@@ -235,6 +243,7 @@ def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_
             'date_pub': data_pub,
             'date_pub_iso': data_pub_iso_str, # Store as string
             'category': categoria,
+            'category_key': categoria_key,
             'region': regione,
             'province': provincia,
             'town': comune,

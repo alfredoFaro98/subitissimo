@@ -134,6 +134,16 @@ main { flex: 1; padding: 40px 0; }
     transition: var(--transition);
 }
 
+select.form-input {
+    cursor: pointer;
+}
+
+.form-input option,
+.form-input optgroup {
+    background: var(--dark-bg);
+    color: var(--text-main);
+}
+
 .form-input:focus {
     outline: none;
     border-color: var(--primary);

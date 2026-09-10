@@ -4,6 +4,7 @@ from . import views
 urlpatterns = [
     path('', views.search_view, name='search'),
     path('results/', views.results_view, name='results'),
+    path('results/export/', views.export_results_csv, name='export_results_csv'),
     path('results/map/', views.map_view, name='map_view'),
     
     # New Persistence Features

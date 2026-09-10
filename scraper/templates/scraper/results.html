@@ -5,10 +5,13 @@
 {% block content %}
     <div class="results-header">
         <div style="color: var(--text-muted);">
-            Found <span style="color: var(--primary); font-weight: 600;">{{ search.total_results }}</span> results for "{{ search.query }}"
+            Found <span style="color: var(--primary); font-weight: 600;">{{ search.total_results }}</span> results for "{{ search.query }}"{% if search_category_name %} in <span style="color: var(--text-main); font-weight: 600;">{{ search_category_name }}</span>{% endif %}
         </div>
         
         <div style="display: flex; gap: 15px;">
+            <a href="{% url 'export_results_csv' %}?{{ request.GET.urlencode }}" class="btn-primary" style="background: rgba(34, 197, 94, 0.18); border: 1px solid rgba(34, 197, 94, 0.35); color: #86efac; padding: 8px 16px; font-size: 0.9rem;">
+                <i class="fa-solid fa-file-csv"></i> CSV
+            </a>
             <a href="{% url 'map_view' %}" class="btn-primary" style="background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(255, 255, 255, 0.1); padding: 8px 16px; font-size: 0.9rem;">
                 <i class="fa-solid fa-map"></i> View on Map
             </a>
@@ -22,46 +25,62 @@
 <div class="glass-card" style="margin-bottom: 20px; padding: 20px; display: flex; align-items: center; justify-content: space-between;">
     <div style="font-weight: 600; color: var(--text-muted);">Sort By:</div>
     <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-        <a href="?sort=price_asc" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; {% if request.GET.sort == 'price_asc' %}background: var(--primary);{% else %}background: rgba(30, 41, 59, 0.5); color: var(--text-muted);{% endif %}">
+        <a href="{% querystring sort='price_asc' %}" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; {% if request.GET.sort == 'price_asc' %}background: var(--primary);{% else %}background: rgba(30, 41, 59, 0.5); color: var(--text-muted);{% endif %}">
             Prezzo <i class="fa-solid fa-arrow-up"></i>
         </a>
-        <a href="?sort=price_desc" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; {% if request.GET.sort == 'price_desc' %}background: var(--primary);{% else %}background: rgba(30, 41, 59, 0.5); color: var(--text-muted);{% endif %}">
+        <a href="{% querystring sort='price_desc' %}" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; {% if request.GET.sort == 'price_desc' %}background: var(--primary);{% else %}background: rgba(30, 41, 59, 0.5); color: var(--text-muted);{% endif %}">
             Prezzo <i class="fa-solid fa-arrow-down"></i>
         </a>
-        <a href="?sort=date_desc" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; {% if request.GET.sort == 'date_desc' or not request.GET.sort %}background: var(--primary);{% else %}background: rgba(30, 41, 59, 0.5); color: var(--text-muted);{% endif %}">
+        <a href="{% querystring sort='date_desc' %}" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; {% if request.GET.sort == 'date_desc' or not request.GET.sort %}background: var(--primary);{% else %}background: rgba(30, 41, 59, 0.5); color: var(--text-muted);{% endif %}">
             Più recenti <i class="fa-solid fa-clock"></i>
         </a>
-        <a href="?sort=date_asc" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; {% if request.GET.sort == 'date_asc' %}background: var(--primary);{% else %}background: rgba(30, 41, 59, 0.5); color: var(--text-muted);{% endif %}">
+        <a href="{% querystring sort='date_asc' %}" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; {% if request.GET.sort == 'date_asc' %}background: var(--primary);{% else %}background: rgba(30, 41, 59, 0.5); color: var(--text-muted);{% endif %}">
             Più vecchi <i class="fa-regular fa-clock"></i>
         </a>
         
         <div style="width: 1px; background: rgba(255,255,255,0.1); margin: 0 10px;"></div>
 
         <!-- All Results Filter -->
-        <a href="?sort={{ request.GET.sort }}" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; {% if not request.GET.shippable %}background: var(--primary);{% else %}background: rgba(30, 41, 59, 0.5); color: var(--text-muted);{% endif %}">
+        <a href="{% querystring shippable=None %}" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; {% if not request.GET.shippable %}background: var(--primary);{% else %}background: rgba(30, 41, 59, 0.5); color: var(--text-muted);{% endif %}">
             Tutti
         </a>
 
         <!-- Shipping Filter Toggle -->
         {% if request.GET.shippable == 'true' %}
-            <a href="?sort={{ request.GET.sort }}" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; background: var(--primary);">
+            <a href="{% querystring shippable=None %}" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; background: var(--primary);">
                 Spedizione <i class="fa-solid fa-check"></i>
             </a>
         {% else %}
-            <a href="?sort={{ request.GET.sort }}&shippable=true" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; background: rgba(30, 41, 59, 0.5); color: var(--text-muted);">
+            <a href="{% querystring shippable='true' %}" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; background: rgba(30, 41, 59, 0.5); color: var(--text-muted);">
                 Spedizione <i class="fa-solid fa-truck"></i>
             </a>
         {% endif %}
 
         <!-- No Shipping Filter -->
         {% if request.GET.shippable == 'false' %}
-            <a href="?sort={{ request.GET.sort }}" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; background: var(--primary);">
+            <a href="{% querystring shippable=None %}" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; background: var(--primary);">
                 No Spedizione <i class="fa-solid fa-check"></i>
             </a>
         {% else %}
-            <a href="?sort={{ request.GET.sort }}&shippable=false" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; background: rgba(30, 41, 59, 0.5); color: var(--text-muted);">
+            <a href="{% querystring shippable='false' %}" class="btn-primary" style="font-size: 0.9rem; padding: 10px 20px; background: rgba(30, 41, 59, 0.5); color: var(--text-muted);">
                 No Spedizione <i class="fa-solid fa-handshake"></i>
             </a>
+        {% endif %}
+
+        {% if category_counts|length > 1 %}
+        <div style="width: 1px; background: rgba(255,255,255,0.1); margin: 0 10px;"></div>
+
+        <!-- Category Filter -->
+        <form method="get" style="display: flex; align-items: center;">
+            {% if request.GET.sort %}<input type="hidden" name="sort" value="{{ request.GET.sort }}">{% endif %}
+            {% if request.GET.shippable %}<input type="hidden" name="shippable" value="{{ request.GET.shippable }}">{% endif %}
+            <select name="category" class="form-input" onchange="this.form.submit()" style="width: auto; padding: 10px 16px; font-size: 0.9rem; border-radius: 16px; {% if request.GET.category %}border-color: var(--primary);{% endif %}">
+                <option value="">Tutte le categorie</option>
+                {% for name, count in category_counts %}
+                <option value="{{ name }}" {% if request.GET.category == name %}selected{% endif %}>{{ name }} ({{ count }})</option>
+                {% endfor %}
+            </select>
+        </form>
         {% endif %}
     </div>
 </div>

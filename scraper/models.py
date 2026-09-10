@@ -1,15 +1,21 @@
 from django.db import models
+from .categories import CATEGORY_NAMES
 
 class SearchQuery(models.Model):
     query = models.CharField(max_length=255)
     limit = models.IntegerField(default=35)
     title_only = models.BooleanField(default=False)
     shippable_only = models.BooleanField(default=False)
+    category = models.CharField(max_length=10, blank=True, default='')
     total_results = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     
     def __str__(self):
         return self.query
+
+    @property
+    def category_name(self):
+        return CATEGORY_NAMES.get(self.category, '')
 
 class Item(models.Model):
     search_query = models.ForeignKey(SearchQuery, on_delete=models.CASCADE, related_name='items')
