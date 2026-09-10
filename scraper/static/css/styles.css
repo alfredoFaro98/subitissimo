@@ -144,6 +144,10 @@ select.form-input {
     color: var(--text-main);
 }
 
+.form-input option.macro-option {
+    font-weight: 700;
+}
+
 .form-input:focus {
     outline: none;
     border-color: var(--primary);

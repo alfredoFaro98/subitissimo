@@ -19,7 +19,7 @@
                 {% for search in searches %}
                 <tr>
                     <td>{{ search.created_at|date:"d/m/Y H:i" }}</td>
-                    <td style="font-weight: 600; color: var(--primary);">{{ search.query }}</td>
+                    <td style="font-weight: 600; color: var(--primary);">{{ search.query|default:"Tutti gli annunci" }}</td>
                     <td>{{ search.total_results }}</td>
                     <td>
                         {% if search.category_name %}<span class="badge">{{ search.category_name }}</span>{% endif %}

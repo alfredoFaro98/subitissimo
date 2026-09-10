@@ -9,7 +9,7 @@ from django.utils.text import slugify
 from .services import run_search
 from .models import GeoCache
 from .cities_data import ITALIAN_CITIES
-from .categories import CATEGORY_GROUPS, CATEGORY_NAMES
+from .categories import MACROCATEGORIES, CATEGORY_NAMES
 
 
 def get_current_search_items(request):
@@ -58,15 +58,16 @@ def get_current_search_items(request):
     return processed_items
 
 def search_view(request):
+    error = ''
     if request.method == 'POST':
-        query = request.POST.get('query')
+        query = (request.POST.get('query') or '').strip()
         limit = int(request.POST.get('limit', 35))
         title_only = request.POST.get('title_only') == 'on'
         shippable_only = request.POST.get('shippable_only') == 'on'
         category = request.POST.get('category', '')
         if category not in CATEGORY_NAMES:
             category = ''
-        if query:
+        if query or category:
             items_list = run_search(query, limit=limit, title_only=title_only, shippable_only=shippable_only, category=category)
             
             # Save results to session
@@ -76,7 +77,8 @@ def search_view(request):
             request.session['total_results'] = len(items_list) # Simplified count
             
             return redirect('results')
-    return render(request, 'scraper/search.html', {'category_groups': CATEGORY_GROUPS})
+        error = 'Scrivi cosa cerchi oppure scegli una categoria.'
+    return render(request, 'scraper/search.html', {'macrocategories': MACROCATEGORIES, 'error': error})
 
 def results_view(request):
     query = request.session.get('search_query', 'Unknown')

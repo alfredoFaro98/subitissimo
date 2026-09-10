@@ -5,20 +5,20 @@
     <h1 class="search-title">Subitissimo</h1>
     <p class="search-subtitle">Advanced scraping & analysis for Subito.it</p>
     
-    <form method="post" action="" class="search-form" onsubmit="document.body.classList.add('loading')">
+    <form method="post" action="" class="search-form">
         {% csrf_token %}
+        <p id="searchError" style="color: #f87171; margin: 0;{% if not error %} display: none;{% endif %}">Scrivi cosa cerchi oppure scegli una categoria.</p>
         <div class="form-group">
-            <input type="text" name="query" class="form-input" placeholder="What are you looking for?" required autofocus>
+            <input type="text" name="query" class="form-input" placeholder="Cosa cerchi? Vuoto = tutti gli annunci della categoria" autofocus>
         </div>
         <div class="form-group">
             <select name="category" class="form-input">
                 <option value="">Tutte le categorie</option>
-                {% for group, cats in category_groups %}
-                <optgroup label="{{ group }}">
-                    {% for key, name in cats %}
-                    <option value="{{ key }}">{{ name }}</option>
-                    {% endfor %}
-                </optgroup>
+                {% for macro_key, macro_name, cats in macrocategories %}
+                <option value="{{ macro_key }}" class="macro-option">{{ macro_name }}</option>
+                {% for key, name in cats %}
+                <option value="{{ key }}">&nbsp;&nbsp;&nbsp;&nbsp;{{ name }}</option>
+                {% endfor %}
                 {% endfor %}
             </select>
         </div>
@@ -50,6 +50,13 @@
 
 <script>
 document.querySelector('.search-form').addEventListener('submit', function(e) {
+    const query = this.querySelector('[name="query"]').value.trim();
+    const category = this.querySelector('[name="category"]').value;
+    if (!query && !category) {
+        e.preventDefault();
+        document.getElementById('searchError').style.display = 'block';
+        return;
+    }
     document.body.classList.add('loading');
     document.getElementById('loadingText').style.display = 'block';
     
