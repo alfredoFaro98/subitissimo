@@ -77,15 +77,36 @@ roba effettivamente nuova.
 python manage.py monitor --once            # un giro solo, poi esce (per provare)
 python manage.py monitor --monitor 1       # solo il monitor con quell'id
 python manage.py monitor --headful         # mostra il browser, per capire cosa succede
+python manage.py monitor --recap 0         # non ristampare gli annunci gia' raccolti oggi
+python manage.py monitor --no-links        # titoli non cliccabili (terminali vecchi)
 ```
+
+All'avvio ristampa gli annunci gia' raccolti dalla mezzanotte (ultimi 500, `--recap N`
+per cambiare). E' una lettura del database, non una nuova scaricata: serve a ritrovare a
+schermo quello che si era perso chiudendo la finestra. Gira prima di accendere il browser,
+cosi' compare subito.
+
+Ogni riga finisce con un `>>` cliccabile che apre l'annuncio (sequenza OSC 8, Ctrl+click
+su Windows Terminal). Il link sta sul segnetto e non sul titolo di proposito: il terminale
+sottolinea la zona cliccabile, e sottolineare due caratteri e' meno invadente che
+sottolineare l'intero titolo. Le sequenze vengono emesse solo se `sys.stdout.isatty()`,
+altrimenti finirebbero dentro i file di log.
 
 ## Trappole — leggere prima di mettere le mani
 
-**1. L'indice di Subito si aggiorna ogni ~6 minuti, non in continuo.**
-Misurato interrogando l'API ogni 15 secondi per 6 minuti: la lista resta identica per
-minuti, poi arriva tutto in una raffica (~60 annunci insieme). Abbassare l'intervallo
-sotto i 30 secondi **non fa arrivare gli annunci prima**, moltiplica solo le richieste e
-il rischio di prendersi un 429. L'intervallo di default è 30s, ed è già generoso.
+**1. L'indice di Subito si aggiorna a raffiche, non in continuo.**
+Misurato interrogando l'API ogni 15-20 secondi: la lista resta congelata sullo stesso
+istante per minuti, poi arriva tutto insieme (~60 annunci in una botta). Nel momento
+della raffica l'indice è quasi in diretta — porta annunci pubblicati 10-15 secondi prima
+— quindi il ritardo non è strutturale, è "quanto manca al prossimo aggiornamento".
+
+Abbassare l'intervallo sotto i 30 secondi **non fa arrivare gli annunci prima**: tra una
+raffica e l'altra non esiste nulla di nuovo da vedere. Moltiplica solo le richieste e il
+rischio di prendersi un 429.
+
+Verificato che non è una cache davanti all'API: una richiesta con parametro anti-cache
+restituisce esattamente gli stessi annunci, e categorie diverse (9, 10, 12) si congelano
+e si sbloccano nello stesso identico istante. È l'indice di ricerca globale.
 
 **2. Niente query al database dentro un blocco Playwright, di norma.**
 L'API sincrona di Playwright gira dentro un event loop e Django rifiuta le query lì

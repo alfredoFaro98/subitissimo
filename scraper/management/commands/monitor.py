@@ -21,6 +21,7 @@ import time
 os.environ.setdefault('DJANGO_ALLOW_ASYNC_UNSAFE', '1')
 
 from django.core.management.base import BaseCommand
+from django.db.models import Max, Min
 from django.utils import timezone
 
 from scraper.csv_log import csv_path, flush_pending
@@ -37,6 +38,32 @@ HIT_FIELDS = (
     'region', 'province', 'town', 'condition', 'shipping_type', 'shipping_cost',
     'shippable', 'image_url', 'url', 'description', 'defect_flag', 'defect_reason',
 )
+
+
+def hyperlink(text, url, enabled=True):
+    """Rende `text` cliccabile nel terminale, nascondendo l'url dietro di esso.
+
+    Usa la sequenza OSC 8, la stessa cosa dei colori ma per i collegamenti. I
+    terminali che non la conoscono la ignorano e mostrano il testo normale;
+    Windows Terminal la apre con Ctrl+click. Va disattivata quando l'output
+    finisce in un file, altrimenti ci si ritrovano dentro i codici di escape.
+    """
+    if not enabled or not url or not text:
+        return text
+    return '\033]8;;{}\033\\{}\033]8;;\033\\'.format(url, text)
+
+
+def link_marker(url, enabled=True):
+    """Segnetto cliccabile da appendere in fondo alla riga.
+
+    Il link sta qui e non sul titolo di proposito: il terminale sottolinea la
+    zona cliccabile, e sottolineare due caratteri e' molto meno invadente che
+    sottolineare l'intero titolo. Se i link sono spenti non si stampa nulla,
+    un ">>" morto sarebbe solo rumore.
+    """
+    if not enabled or not url:
+        return ''
+    return '  ' + hyperlink('>>', url, True)
 
 
 def published_before(item, cutoff):
@@ -81,6 +108,11 @@ class Command(BaseCommand):
                             help='Ogni quanti secondi rifare il browser headless (default 3600).')
         parser.add_argument('--headful', action='store_true',
                             help='Mostra il browser, utile solo per capire cosa succede.')
+        parser.add_argument('--no-links', action='store_true',
+                            help='Non rendere cliccabili i titoli (se il terminale mostra caratteri strani).')
+        parser.add_argument('--recap', type=int, default=500,
+                            help='Quanti annunci gia\' raccolti oggi ristampare all\'avvio '
+                                 '(default 500, 0 per non mostrarli).')
 
     # ------------------------------------------------------------------ utils
 
@@ -171,7 +203,9 @@ class Command(BaseCommand):
 
         for item in collected:
             prezzo = item.get('price_str') or '-'
-            self.log('  + {} | {}'.format(prezzo, (item.get('title') or '')[:70]), self.style.SUCCESS)
+            titolo = (item.get('title') or '')[:70]
+            self.log('  + {} | {}{}'.format(prezzo, titolo, link_marker(item.get('url'), self.links)),
+                     self.style.SUCCESS)
         if collected:
             self.log('{}: {} nuovi ({} nel CSV)'.format(monitor.label, len(collected), scritte),
                      self.style.SUCCESS)
@@ -185,6 +219,58 @@ class Command(BaseCommand):
         monitor.last_error = message[:500]
         monitor.save(update_fields=['last_checked_at', 'last_error'])
 
+    # ------------------------------------------------------------------ recap
+
+    def print_recap(self, monitors, limit):
+        """Ristampa gli annunci gia' raccolti oggi, letti dal database.
+
+        Non tocca Subito: e' roba gia' scaricata nelle sessioni precedenti, si
+        rigenerano solo le righe. Serve a ritrovare a schermo quello che si era
+        perso chiudendo la finestra.
+        """
+        if not limit:
+            return
+
+        mezzanotte = timezone.localtime().replace(hour=0, minute=0, second=0, microsecond=0)
+        oggi = MonitorHit.objects.filter(
+            monitor__in=monitors, is_seed=False, first_seen_at__gte=mezzanotte,
+        )
+        totale = oggi.count()
+        if not totale:
+            return
+
+        # i piu' recenti, poi rimessi in ordine cronologico: cosi' l'ultimo
+        # raccolto sta in fondo, attaccato a quello che arrivera' dal vivo
+        righe = list(oggi.select_related('monitor').order_by('-first_seen_at')[:limit])
+        righe.reverse()
+
+        # l'intervallo e' quello dell'intera giornata, non delle sole righe mostrate
+        estremi = oggi.aggregate(primo=Min('first_seen_at'), ultimo=Max('first_seen_at'))
+        testa = 'Oggi: {} annunci raccolti, dalle {} alle {}'.format(
+            totale,
+            timezone.localtime(estremi['primo']).strftime('%H:%M'),
+            timezone.localtime(estremi['ultimo']).strftime('%H:%M'),
+        )
+        if totale > len(righe):
+            testa += ' -- qui sotto gli ultimi {}'.format(len(righe))
+
+        piu_monitor = len(monitors) > 1
+        self.stdout.write('')
+        self.stdout.write(testa)
+        self.stdout.write('--- gia\' raccolti, non sono nuovi ---')
+        for hit in righe:
+            riga = '  {}  . {} | {}{}'.format(
+                timezone.localtime(hit.first_seen_at).strftime('%H:%M:%S'),
+                hit.price_str or '-',
+                (hit.title or '')[:70],
+                link_marker(hit.url, self.links),
+            )
+            if piu_monitor:
+                riga += '  [{}]'.format(hit.monitor.label)
+            self.stdout.write(riga)
+        self.stdout.write('--- da qui in poi e\' roba nuova ---')
+        self.stdout.write('')
+
     # ------------------------------------------------------------------- loop
 
     def handle(self, *args, **options):
@@ -197,6 +283,10 @@ class Command(BaseCommand):
             except (AttributeError, ValueError):
                 pass
 
+        # I link si mettono solo se si sta scrivendo su un terminale vero:
+        # rediretto su file sporcherebbe il file con i codici di escape.
+        self.links = sys.stdout.isatty() and not options['no_links']
+
         only_id = options['monitor']
         jitter = max(0.0, options['jitter'])
         recycle = options['recycle']
@@ -207,6 +297,9 @@ class Command(BaseCommand):
                 'Nessun monitor attivo. Creane uno dalla pagina /monitor/ e rilancia.'
             ))
             return
+
+        # prima il gia' visto (lettura locale, istantanea), poi si accende il browser
+        self.print_recap(monitors, max(0, options['recap']))
 
         session = HadesSession(headless=not options['headful'])
         self.log('Avvio browser e raccolta cookie...')
