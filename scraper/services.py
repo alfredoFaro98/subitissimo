@@ -6,6 +6,7 @@ from urllib.parse import quote_plus
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 from .models import SearchQuery # Re-enabled for History
+from .text_flags import detect_defects
 
 BASE_SITE = "https://www.subito.it"
 HADES_URL = "https://hades.subito.it/v1/search/items"
@@ -99,6 +100,87 @@ def first_image_url_browser(ad: Dict[str, Any]) -> str:
         url += "?rule=gallery-desktop-1x-auto"
     return url
 
+def parse_iso_datetime(value: Any) -> Optional[datetime]:
+    """Converte la data ISO8601 di Subito in datetime (aware). None se illeggibile."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+def ad_to_dict(ad: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalizza un annuncio grezzo dell'API Hades nel dict usato da tutta l'app."""
+    id_annuncio = ad.get("urn") or ""
+    nome = ad.get("subject") or ad.get("title") or ""
+    description = ad.get("body") or ""
+
+    prezzo_str = feature_value(ad, "/price")
+    prezzo_num = parse_number(feature_first(ad, "/price").get("key") or prezzo_str)
+
+    data_pub = safe_get(ad, "dates.display", "")
+    # Parse ISO date
+    data_pub_iso_str = safe_get(ad, "dates.display_iso8601", "")
+    # Maintain ISO string for session storage, can parse later
+    
+    categoria = safe_get(ad, "category.value", "")
+    categoria_key = safe_get(ad, "category.key", "")
+    regione = safe_get(ad, "geo.region.value", "")
+    provincia = safe_get(ad, "geo.city.value", "")
+    comune = safe_get(ad, "geo.town.value", "")
+
+    condizione = feature_value(ad, "/item_condition")
+    spedizione_tipo = feature_value(ad, "/item_shipping_type")
+
+    costo_sped_str = feature_value(ad, "/item_shipping_cost_tuttosubito")
+    costo_sped_num = parse_number(feature_first(ad, "/item_shipping_cost_tuttosubito").get("key") or costo_sped_str)
+
+    spedibile_val = feature_value(ad, "/item_shippable")
+    spedibile = (spedibile_val.lower() == 'true')
+    
+    # Fallback: if we have a shipping cost, it is shippable
+    if costo_sped_num is not None:
+        spedibile = True
+        
+    # Try to find likes/favorites in raw payload 
+    likes_val = 0
+    if "favorites" in ad:
+         try:
+             likes_val = int(ad["favorites"])
+         except:
+             pass
+    
+    url = normalize_url(ad)
+    img_url = first_image_url_browser(ad)
+    
+    # Defect Detection
+    defects = detect_defects(nome, description)
+    
+    item_dict = {
+        'subito_id': id_annuncio,
+        'title': nome,
+        'price_str': prezzo_str,
+        'price_num': prezzo_num,
+        'date_pub': data_pub,
+        'date_pub_iso': data_pub_iso_str, # Store as string
+        'category': categoria,
+        'category_key': categoria_key,
+        'region': regione,
+        'province': provincia,
+        'town': comune,
+        'condition': condizione,
+        'shipping_type': spedizione_tipo,
+        'shipping_cost': costo_sped_num,
+        'shippable': spedibile,
+        'likes_count': likes_val,
+        'image_url': img_url,
+        'url': url,
+        'description': description,
+        'defect_flag': defects['flag'],
+        'defect_reason': defects['reason']
+    }
+    return item_dict
+
 def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_only: bool = False, category: str = "", max_pages: int = 200, sleep: float = 0.25) -> List[Dict[str, Any]]:
     q_url = quote_plus(query)
     search_url = SEARCH_TEMPLATE.format(q=q_url)
@@ -186,78 +268,105 @@ def run_search(query: str, limit: int = 35, title_only: bool = False, shippable_
     search_obj.total_results = total_count
     search_obj.save()
 
-    # Create Items list (dicts)
-    items_list = []
-    for ad in all_ads:
-        id_annuncio = ad.get("urn") or ""
-        nome = ad.get("subject") or ad.get("title") or ""
-        description = ad.get("body") or ""
-
-        prezzo_str = feature_value(ad, "/price")
-        prezzo_num = parse_number(feature_first(ad, "/price").get("key") or prezzo_str)
-
-        data_pub = safe_get(ad, "dates.display", "")
-        # Parse ISO date
-        data_pub_iso_str = safe_get(ad, "dates.display_iso8601", "")
-        # Maintain ISO string for session storage, can parse later
-        
-        categoria = safe_get(ad, "category.value", "")
-        categoria_key = safe_get(ad, "category.key", "")
-        regione = safe_get(ad, "geo.region.value", "")
-        provincia = safe_get(ad, "geo.city.value", "")
-        comune = safe_get(ad, "geo.town.value", "")
-
-        condizione = feature_value(ad, "/item_condition")
-        spedizione_tipo = feature_value(ad, "/item_shipping_type")
-
-        costo_sped_str = feature_value(ad, "/item_shipping_cost_tuttosubito")
-        costo_sped_num = parse_number(feature_first(ad, "/item_shipping_cost_tuttosubito").get("key") or costo_sped_str)
-
-        spedibile_val = feature_value(ad, "/item_shippable")
-        spedibile = (spedibile_val.lower() == 'true')
-        
-        # Fallback: if we have a shipping cost, it is shippable
-        if costo_sped_num is not None:
-            spedibile = True
-            
-        # Try to find likes/favorites in raw payload 
-        likes_val = 0
-        if "favorites" in ad:
-             try:
-                 likes_val = int(ad["favorites"])
-             except:
-                 pass
-        
-        url = normalize_url(ad)
-        img_url = first_image_url_browser(ad)
-        
-        # Defect Detection
-        from .text_flags import detect_defects
-        defects = detect_defects(nome, description)
-        
-        item_dict = {
-            'subito_id': id_annuncio,
-            'title': nome,
-            'price_str': prezzo_str,
-            'price_num': prezzo_num,
-            'date_pub': data_pub,
-            'date_pub_iso': data_pub_iso_str, # Store as string
-            'category': categoria,
-            'category_key': categoria_key,
-            'region': regione,
-            'province': provincia,
-            'town': comune,
-            'condition': condizione,
-            'shipping_type': spedizione_tipo,
-            'shipping_cost': costo_sped_num,
-            'shippable': spedibile,
-            'likes_count': likes_val,
-            'image_url': img_url,
-            'url': url,
-            'description': description,
-            'defect_flag': defects['flag'],
-            'defect_reason': defects['reason']
-        }
-        items_list.append(item_dict)
+    items_list = [ad_to_dict(ad) for ad in all_ads]
 
     return items_list
+
+
+class HadesError(RuntimeError):
+    """Errore di rete/HTTP parlando con l'API di Subito."""
+
+    def __init__(self, message: str, status: Optional[int] = None):
+        super().__init__(message)
+        self.status = status
+
+
+class HadesSession:
+    """Browser headless tenuto vivo tra una chiamata e l'altra.
+
+    Serve al monitor: l'avvio di Chromium (e il giro sul sito per farsi dare i
+    cookie) si paga una volta sola, poi ogni controllo costa una singola
+    richiesta JSON. `restart()` rifa' la sessione quando i cookie scadono.
+    """
+
+    def __init__(self, headless: bool = True, locale: str = "it-IT"):
+        self.headless = headless
+        self.locale = locale
+        self._pw = None
+        self._browser = None
+        self._context = None
+        self._started_at: Optional[float] = None
+
+    def start(self) -> None:
+        self.stop()
+        self._pw = sync_playwright().start()
+        self._browser = self._pw.chromium.launch(headless=self.headless)
+        self._context = self._browser.new_context(locale=self.locale)
+        page = self._context.new_page()
+        try:
+            page.goto(BASE_SITE, wait_until="networkidle", timeout=60000)
+            time.sleep(1.0)
+        finally:
+            page.close()
+        self._started_at = time.monotonic()
+
+    def stop(self) -> None:
+        for closer in (self._browser, self._pw):
+            if closer is None:
+                continue
+            try:
+                closer.stop() if closer is self._pw else closer.close()
+            except Exception:
+                pass
+        self._pw = None
+        self._browser = None
+        self._context = None
+        self._started_at = None
+
+    def restart(self) -> None:
+        self.start()
+
+    @property
+    def age_seconds(self) -> float:
+        if self._started_at is None:
+            return 0.0
+        return time.monotonic() - self._started_at
+
+    def fetch_items(self, query: str = "", category: str = "", limit: int = 50, start: int = 0,
+                    title_only: bool = False, shippable_only: bool = False,
+                    sort: str = "datedesc", timeout: int = 30000):
+        """Una pagina di risultati, gia' normalizzata. Ritorna (items, count_all)."""
+        if self._context is None:
+            self.start()
+
+        params: Dict[str, Any] = {"q": query, "start": start, "lim": limit, "sort": sort}
+        if title_only:
+            params["qso"] = "true"
+        if shippable_only:
+            params["sh"] = "true"
+        if category:
+            params["c"] = category
+
+        try:
+            resp = self._context.request.get(HADES_URL, params=params, timeout=timeout)
+        except Exception as exc:
+            raise HadesError(f"richiesta fallita: {exc}") from exc
+
+        if not resp.ok:
+            raise HadesError(f"HTTP {resp.status} dall'API Hades", status=resp.status)
+
+        try:
+            payload = resp.json()
+        except Exception as exc:
+            raise HadesError(f"risposta non JSON: {exc}") from exc
+
+        items = [ad_to_dict(ad) for ad in pick_items(payload)]
+        return items, int(payload.get("count_all") or 0)
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, *exc_info):
+        self.stop()
+        return False

@@ -310,3 +310,124 @@ def delete_history(request, pk):
 def delete_saved_search(request, pk):
     get_object_or_404(SavedSearch, pk=pk).delete()
     return redirect('saved_searches')
+
+
+# ---------------------------------------------------------------- Monitor
+from .models import Monitor, MonitorHit
+from django.core.paginator import Paginator
+from django.utils import timezone
+from datetime import timedelta
+
+HITS_PER_PAGE = 60
+
+
+def monitor_view(request):
+    monitors = Monitor.objects.all()
+
+    hits = MonitorHit.objects.select_related('monitor')
+
+    selected_id = request.GET.get('m') or ''
+    selected = None
+    if selected_id.isdigit():
+        selected = monitors.filter(pk=int(selected_id)).first()
+        if selected:
+            hits = hits.filter(monitor=selected)
+
+    # Gli annunci della semina iniziale (quelli gia' online quando hai acceso il
+    # monitor) restano archiviati ma fuori dal feed, salvo richiesta esplicita.
+    show_seed = request.GET.get('seed') == '1'
+    if not show_seed:
+        hits = hits.filter(is_seed=False)
+
+    if request.GET.get('unread') == '1':
+        hits = hits.filter(is_read=False)
+
+    day_ago = timezone.now() - timedelta(hours=24)
+    stats = {
+        'total': MonitorHit.objects.filter(is_seed=False).count(),
+        'last_day': MonitorHit.objects.filter(is_seed=False, first_seen_at__gte=day_ago).count(),
+        'unread': MonitorHit.objects.filter(is_seed=False, is_read=False).count(),
+    }
+
+    page = Paginator(hits, HITS_PER_PAGE).get_page(request.GET.get('page'))
+
+    context = {
+        'macrocategories': MACROCATEGORIES,
+        'monitors': monitors,
+        'selected': selected,
+        'page_obj': page,
+        'hits': page.object_list,
+        'stats': stats,
+        'show_seed': show_seed,
+        'only_unread': request.GET.get('unread') == '1',
+    }
+    return render(request, 'scraper/monitor.html', context)
+
+
+@require_POST
+def create_monitor(request):
+    query = (request.POST.get('query') or '').strip()
+    category = request.POST.get('category', '')
+    if category not in CATEGORY_NAMES:
+        category = ''
+
+    if not query and not category:
+        messages.error(request, 'Serve almeno una parola chiave o una categoria.')
+        return redirect('monitor')
+
+    try:
+        interval = int(request.POST.get('interval_seconds') or 30)
+    except ValueError:
+        interval = 30
+
+    Monitor.objects.create(
+        name=(request.POST.get('name') or '').strip(),
+        query=query,
+        category=category,
+        title_only=request.POST.get('title_only') == 'on',
+        shippable_only=request.POST.get('shippable_only') == 'on',
+        interval_seconds=max(5, min(3600, interval)),
+    )
+    messages.success(request, 'Monitor creato. Lancia (o riavvia) "python manage.py monitor" per attivarlo.')
+    return redirect('monitor')
+
+
+@require_POST
+def toggle_monitor(request, pk):
+    monitor = get_object_or_404(Monitor, pk=pk)
+    monitor.is_active = not monitor.is_active
+    monitor.save(update_fields=['is_active'])
+    return redirect(request.POST.get('next') or 'monitor')
+
+
+@require_POST
+def delete_monitor(request, pk):
+    get_object_or_404(Monitor, pk=pk).delete()
+    return redirect('monitor')
+
+
+@require_POST
+def mark_hits_read(request):
+    hits = MonitorHit.objects.filter(is_read=False)
+    monitor_id = request.POST.get('monitor')
+    if monitor_id and monitor_id.isdigit():
+        hits = hits.filter(monitor_id=int(monitor_id))
+    hits.update(is_read=True)
+    return redirect(request.POST.get('next') or 'monitor')
+
+
+def download_monitor_csv(request, pk):
+    """Scarica il registro CSV di un monitor cosi' com'e' su disco."""
+    from .csv_log import csv_path
+    import os
+
+    monitor = get_object_or_404(Monitor, pk=pk)
+    percorso = csv_path(monitor)
+    if not os.path.exists(percorso):
+        messages.error(request, 'Il registro di questo monitor e\' ancora vuoto.')
+        return redirect('monitor')
+
+    with open(percorso, 'rb') as fh:
+        response = HttpResponse(fh.read(), content_type='text/csv; charset=utf-8')
+    response['Content-Disposition'] = 'attachment; filename="%s"' % os.path.basename(percorso)
+    return response

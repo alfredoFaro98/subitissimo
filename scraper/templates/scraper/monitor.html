@@ -1,0 +1,261 @@
+{% extends 'scraper/base.html' %}
+
+{% block content %}
+<div class="results-header" style="flex-wrap: wrap; gap: 15px;">
+    <div>
+        <h2 class="search-title" style="font-size: 2rem; margin: 0;">Monitor <i class="fa-solid fa-satellite-dish" style="color: var(--primary);"></i></h2>
+        <p style="color: var(--text-muted); margin: 5px 0 0;">
+            {{ stats.total }} annunci intercettati · {{ stats.last_day }} nelle ultime 24h · {{ stats.unread }} da vedere
+        </p>
+    </div>
+    <label style="display: flex; align-items: center; gap: 8px; color: var(--text-muted); cursor: pointer;">
+        <input type="checkbox" id="autoRefresh" style="width: auto; margin: 0;">
+        <span>Aggiorna da solo</span>
+    </label>
+</div>
+
+{% if messages %}
+{% for message in messages %}
+<div class="glass-card" style="padding: 12px 18px; margin-bottom: 15px; border-left: 3px solid var(--primary);">
+    {{ message }}
+</div>
+{% endfor %}
+{% endif %}
+
+<!-- Monitor attivi -->
+<div class="glass-card" style="padding: 20px; margin-bottom: 20px;">
+    <div style="display: flex; flex-direction: column; gap: 12px;">
+        {% for m in monitors %}
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding-bottom: 12px; border-bottom: 1px solid var(--border);">
+            <span title="{% if m.is_active %}attivo{% else %}in pausa{% endif %}"
+                  style="width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; background: {% if m.last_error %}#f87171{% elif m.is_active %}#4ade80{% else %}#64748b{% endif %};"></span>
+
+            <div style="flex: 1; min-width: 200px;">
+                <a href="?m={{ m.pk }}" style="color: var(--text-main); text-decoration: none; font-weight: 600;">{{ m.label }}</a>
+                <div style="font-size: 0.8rem; color: var(--text-muted);">
+                    ogni {{ m.interval_seconds }}s ·
+                    {% if m.last_checked_at %}ultimo controllo {{ m.last_checked_at|timesince }} fa{% else %}mai controllato{% endif %}
+                    · {{ m.checks_count }} giri · {{ m.hits.count }} trovati
+                    {% if not m.is_seeded %} · <span style="color: #fbbf24;">in attesa della semina</span>{% endif %}
+                </div>
+                {% if m.last_error %}
+                <div style="font-size: 0.8rem; color: #f87171;">{{ m.last_error }}</div>
+                {% endif %}
+            </div>
+
+            <a href="{% url 'download_monitor_csv' m.pk %}" class="btn-primary"
+               style="padding: 6px 12px; font-size: 0.8rem;" title="Scarica il registro CSV">
+                <i class="fa-solid fa-file-csv"></i>
+            </a>
+            <form method="post" action="{% url 'toggle_monitor' m.pk %}" style="display: inline;">
+                {% csrf_token %}
+                <button type="submit" class="btn-primary" style="padding: 6px 12px; font-size: 0.8rem;">
+                    {% if m.is_active %}<i class="fa-solid fa-pause"></i>{% else %}<i class="fa-solid fa-play"></i>{% endif %}
+                </button>
+            </form>
+            <form method="post" action="{% url 'delete_monitor' m.pk %}" style="display: inline;"
+                  onsubmit="return confirm('Elimino il monitor e tutti gli annunci che ha raccolto?');">
+                {% csrf_token %}
+                <button type="submit" class="btn-primary" style="padding: 6px 12px; font-size: 0.8rem; background: rgba(148,163,184,0.15);">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+            </form>
+        </div>
+        {% empty %}
+        <p style="color: var(--text-muted); margin: 0;">
+            Nessun monitor. Creane uno qui sotto, poi lancia <code>python manage.py monitor</code> in un terminale.
+        </p>
+        {% endfor %}
+    </div>
+
+    <details style="margin-top: 18px;" {% if not monitors %}open{% endif %}>
+        <summary style="cursor: pointer; color: var(--primary); font-weight: 600;">+ Nuovo monitor</summary>
+        <form method="post" action="{% url 'create_monitor' %}" style="margin-top: 15px; display: flex; flex-direction: column; gap: 12px;">
+            {% csrf_token %}
+            <input type="text" name="name" class="form-input" placeholder="Nome (facoltativo)">
+            <input type="text" name="query" class="form-input" placeholder="Parola chiave (vuoto = tutta la categoria)">
+            <select name="category" class="form-input">
+                <option value="">Tutte le categorie</option>
+                {% for macro_key, macro_name, cats in macrocategories %}
+                <option value="{{ macro_key }}" class="macro-option">{{ macro_name }}</option>
+                {% for key, name in cats %}
+                <option value="{{ key }}">&nbsp;&nbsp;&nbsp;&nbsp;{{ name }}</option>
+                {% endfor %}
+                {% endfor %}
+            </select>
+            <div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
+                <label style="display: flex; align-items: center; gap: 8px; color: var(--text-muted); cursor: pointer;">
+                    <input type="checkbox" name="title_only" style="width: auto; margin: 0;">
+                    <span>Solo nel titolo</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 8px; color: var(--text-muted); cursor: pointer;">
+                    <input type="checkbox" name="shippable_only" style="width: auto; margin: 0;">
+                    <span>Solo spedibili</span>
+                </label>
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <input type="number" name="interval_seconds" class="form-input" value="30" min="5" max="3600"
+                       title="Ogni quanti secondi controllare" style="flex: 1;">
+                <button type="submit" class="btn-primary" style="flex: 2;"><span>Crea monitor</span></button>
+            </div>
+            <p style="color: var(--text-muted); font-size: 0.8rem; margin: 0;">
+                Sotto i 15 secondi non ha molto senso: Subito non pubblica cosi' in fretta e aumenta solo il rischio di essere bloccati.
+            </p>
+        </form>
+    </details>
+</div>
+
+<!-- Filtri del feed -->
+<div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 15px;">
+    <a href="{% url 'monitor' %}" class="badge" style="text-decoration: none; {% if not selected %}background: var(--primary); color: #fff;{% endif %}">Tutti</a>
+    {% for m in monitors %}
+    <a href="?m={{ m.pk }}" class="badge" style="text-decoration: none; {% if selected and selected.pk == m.pk %}background: var(--primary); color: #fff;{% endif %}">{{ m.label }}</a>
+    {% endfor %}
+
+    <span style="flex: 1;"></span>
+
+    <a href="?{% if selected %}m={{ selected.pk }}&{% endif %}{% if not only_unread %}unread=1{% endif %}"
+       class="badge" style="text-decoration: none; {% if only_unread %}background: var(--primary); color: #fff;{% endif %}">
+        Solo da vedere
+    </a>
+    <a href="?{% if selected %}m={{ selected.pk }}&{% endif %}{% if not show_seed %}seed=1{% endif %}"
+       class="badge" style="text-decoration: none; {% if show_seed %}background: var(--primary); color: #fff;{% endif %}">
+        Mostra semina iniziale
+    </a>
+    <form method="post" action="{% url 'mark_hits_read' %}" style="display: inline;">
+        {% csrf_token %}
+        {% if selected %}<input type="hidden" name="monitor" value="{{ selected.pk }}">{% endif %}
+        <button type="submit" class="btn-primary" style="padding: 6px 12px; font-size: 0.8rem;">Segna letti</button>
+    </form>
+</div>
+
+<!-- Feed desktop -->
+<div class="glass-card desktop-only" style="padding: 0; overflow: hidden;">
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th></th>
+                    <th>Visto</th>
+                    <th>Prezzo</th>
+                    <th>Titolo</th>
+                    <th>Zona</th>
+                    <th>Monitor</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for hit in hits %}
+                <tr {% if not hit.is_read %}style="background: rgba(255, 56, 92, 0.05);"{% endif %}>
+                    <td>
+                        {% if hit.image_url %}
+                        <img src="{{ hit.image_url }}" alt="img" class="item-img" referrerpolicy="no-referrer">
+                        {% else %}
+                        <div class="item-img" style="display: flex; align-items: center; justify-content: center; background: #334155;">
+                            <i class="fa-solid fa-image" style="color: #64748b;"></i>
+                        </div>
+                        {% endif %}
+                    </td>
+                    <td style="white-space: nowrap;">
+                        <div style="font-weight: 500;">{{ hit.first_seen_at|date:"d/m H:i:s" }}</div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted);">{{ hit.first_seen_at|timesince }} fa</div>
+                    </td>
+                    <td>
+                        <div class="price-tag">
+                            {% if hit.price_num %}€ {{ hit.price_num|floatformat:0 }}{% else %}{{ hit.price_str|default:"-" }}{% endif %}
+                        </div>
+                    </td>
+                    <td>
+                        <a href="{{ hit.url }}" target="_blank" class="item-title">{{ hit.title }}</a>
+                        {% if hit.shippable %}<span class="badge badge-shipping">spedizione</span>{% endif %}
+                        {% if hit.defect_flag %}<span class="badge">{{ hit.defect_flag }}</span>{% endif %}
+                    </td>
+                    <td>
+                        <div style="font-weight: 500;">{{ hit.town|default:"-" }}</div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted);">{{ hit.region }}</div>
+                    </td>
+                    <td style="font-size: 0.85rem; color: var(--text-muted);">{{ hit.monitor.label }}</td>
+                    <td>
+                        <a href="{{ hit.url }}" target="_blank" class="btn-primary" style="padding: 8px 16px; font-size: 0.9rem;">Apri</a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" style="text-align: center; padding: 40px; color: var(--text-muted);">
+                        Ancora nessun annuncio nuovo. Il monitor scrive qui appena ne compare uno.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Feed mobile -->
+<div class="mobile-results">
+    {% for hit in hits %}
+    <div class="mobile-card">
+        <div class="mobile-card-row">
+            <div class="mobile-card-img-container">
+                {% if hit.image_url %}
+                <img src="{{ hit.image_url }}" alt="img" class="mobile-card-img" referrerpolicy="no-referrer">
+                {% else %}
+                <div class="mobile-card-img placeholder"><i class="fa-solid fa-image"></i></div>
+                {% endif %}
+            </div>
+            <div class="mobile-card-content">
+                <a href="{{ hit.url }}" target="_blank" class="mobile-card-title">{{ hit.title }}</a>
+                <div class="mobile-card-price">
+                    {% if hit.price_num %}€ {{ hit.price_num|floatformat:0 }}{% else %}{{ hit.price_str|default:"-" }}{% endif %}
+                </div>
+                <div class="mobile-card-meta"><span>{{ hit.town }} ({{ hit.region }})</span></div>
+            </div>
+        </div>
+        <div class="mobile-card-footer">
+            <div style="font-size: 0.8rem; color: var(--text-muted);">Visto {{ hit.first_seen_at|timesince }} fa</div>
+            <a href="{{ hit.url }}" target="_blank" class="btn-primary" style="padding: 6px 12px; font-size: 0.8rem;">Apri</a>
+        </div>
+    </div>
+    {% empty %}
+    <div style="text-align: center; padding: 40px; color: var(--text-muted);">
+        Ancora nessun annuncio nuovo.
+    </div>
+    {% endfor %}
+</div>
+
+{% if page_obj.has_other_pages %}
+<div style="display: flex; justify-content: center; align-items: center; gap: 15px; margin-top: 20px; color: var(--text-muted);">
+    {% if page_obj.has_previous %}
+    <a href="?{% if selected %}m={{ selected.pk }}&{% endif %}{% if only_unread %}unread=1&{% endif %}{% if show_seed %}seed=1&{% endif %}page={{ page_obj.previous_page_number }}"
+       class="btn-primary" style="padding: 6px 14px; font-size: 0.85rem;">Indietro</a>
+    {% endif %}
+    <span>Pagina {{ page_obj.number }} di {{ page_obj.paginator.num_pages }}</span>
+    {% if page_obj.has_next %}
+    <a href="?{% if selected %}m={{ selected.pk }}&{% endif %}{% if only_unread %}unread=1&{% endif %}{% if show_seed %}seed=1&{% endif %}page={{ page_obj.next_page_number }}"
+       class="btn-primary" style="padding: 6px 14px; font-size: 0.85rem;">Avanti</a>
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    var box = document.getElementById('autoRefresh');
+    var KEY = 'monitorAutoRefresh';
+    var timer = null;
+
+    function apply() {
+        if (timer) { clearTimeout(timer); timer = null; }
+        if (box.checked) { timer = setTimeout(function () { location.reload(); }, 30000); }
+    }
+
+    try { box.checked = localStorage.getItem(KEY) === '1'; } catch (e) {}
+    box.addEventListener('change', function () {
+        try { localStorage.setItem(KEY, box.checked ? '1' : '0'); } catch (e) {}
+        apply();
+    });
+    apply();
+})();
+</script>
+{% endblock %}

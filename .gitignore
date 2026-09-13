@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+
+# File di appoggio creati da SQLite in modalita' WAL
+db.sqlite3-wal
+db.sqlite3-shm
+db.sqlite3-journal
+
+# Dati locali: non vanno versionati
+db.sqlite3
+export/

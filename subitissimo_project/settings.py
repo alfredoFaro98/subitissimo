@@ -78,6 +78,11 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
+        # Il monitor scrive mentre il sito legge: WAL evita i "database is locked".
+        'OPTIONS': {
+            'init_command': 'PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;',
+            'timeout': 20,
+        },
     }
 }
 
@@ -106,7 +111,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'it'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Europe/Rome'
 
 USE_I18N = True
 
