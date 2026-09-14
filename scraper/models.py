@@ -152,6 +152,10 @@ class MonitorHit(models.Model):
     first_seen_at = models.DateTimeField(auto_now_add=True, db_index=True)
     is_read = models.BooleanField(default=False)
     is_seed = models.BooleanField(default=False)
+    # True = ripescato a posteriori sfogliando l'archivio di Subito, non visto
+    # arrivare dal vivo. Vale solo per quelli sopravvissuti: chi era gia' stato
+    # venduto non e' piu' nell'indice e quindi non si recupera.
+    is_backfill = models.BooleanField(default=False)
     # quando la riga e' stata scritta nel CSV; None = ancora da scrivere
     exported_at = models.DateTimeField(blank=True, null=True)
 

@@ -77,20 +77,60 @@ roba effettivamente nuova.
 python manage.py monitor --once            # un giro solo, poi esce (per provare)
 python manage.py monitor --monitor 1       # solo il monitor con quell'id
 python manage.py monitor --headful         # mostra il browser, per capire cosa succede
-python manage.py monitor --recap 0         # non ristampare gli annunci gia' raccolti oggi
+python manage.py monitor --recap -1        # ristampa TUTTI gli annunci del giorno
+python manage.py monitor --recap 0         # non ristamparne nessuno (niente domanda)
+python manage.py monitor --giorno 13/09    # ristampa un giorno preciso (anche "ieri")
+python manage.py monitor --no-backfill     # non recuperare la giornata all'avvio
 python manage.py monitor --no-links        # titoli non cliccabili (terminali vecchi)
 ```
 
-All'avvio ristampa gli annunci gia' raccolti dalla mezzanotte (ultimi 500, `--recap N`
-per cambiare). E' una lettura del database, non una nuova scaricata: serve a ritrovare a
-schermo quello che si era perso chiudendo la finestra. Gira prima di accendere il browser,
-cosi' compare subito.
+All'avvio, su terminale interattivo e senza `--recap`/`--giorno`, **chiede che giorno
+rivedere** mostrando gli ultimi 7 giorni presenti in archivio con i rispettivi conteggi.
+Se il giorno scelto supera le 500 righe chiede anche **quale scaglione**: il numero di
+scaglioni e le loro fasce orarie si calcolano sul momento, perche' dipendono da quanti
+annunci ha quel giorno. Si puo' sempre rispondere `t` (tutti) o `n` (niente).
+
+Se nessuno risponde entro 30 secondi parte da sola — un monitor fermo davanti a una domanda
+non sorveglia niente, ed e' il caso tipico di chi lancia il `.bat` e si allontana. Senza
+terminale interattivo la domanda si salta del tutto.
+
+**Il selettore del giorno legge solo l'archivio locale.** Andare a ripescare un giorno
+passato da Subito non e' previsto ed e' una cattiva idea: per arrivare a ieri bisognerebbe
+sfogliare prima tutto oggi (~130 richieste) e tornerebbe comunque una fetta sempre piu'
+falsata dalla sopravvivenza. Il ripescaggio dalla rete resta solo per oggi.
+
+Il recap gira **dopo** il recupero della giornata: gli scaglioni vanno calcolati sui dati
+veri, non su una giornata ancora a meta'.
 
 Ogni riga finisce con un `>>` cliccabile che apre l'annuncio (sequenza OSC 8, Ctrl+click
 su Windows Terminal). Il link sta sul segnetto e non sul titolo di proposito: il terminale
 sottolinea la zona cliccabile, e sottolineare due caratteri e' meno invadente che
 sottolineare l'intero titolo. Le sequenze vengono emesse solo se `sys.stdout.isatty()`,
 altrimenti finirebbero dentro i file di log.
+
+### Recupero della giornata
+
+All'avvio, se il monitor era spento da piu' di 30 minuti, sfoglia l'archivio all'indietro
+fino alla mezzanotte di oggi e salva tutto quello che trova (`is_backfill=True`, colonna
+`Origine` = "recuperato" nel CSV). Se il buco e' piccolo non fa nulla: il controllo normale
+legge comunque la prima pagina. Costo misurato su Informatica, 16 ore di giornata: **44
+richieste, 26 secondi, 2.167 annunci**.
+
+**Attenzione al significato.** Si recupera solo cio' che e' SOPRAVVISSUTO: un annuncio
+pubblicato stamattina e gia' venduto non e' piu' nell'indice, quindi non lo vedra' mai
+nessuno. La distribuzione oraria lo mostra bene — l'ora corrente rende ~8 annunci/minuto,
+quella di sette ore prima ~3,7: la differenza e' roba che nel frattempo e' sparita. Quindi
+e' un **inventario di cosa e' ancora comprabile**, non il registro di cosa e' passato. Solo
+le righe `is_backfill=False` sono un archivio storico onesto.
+
+I recuperati nascono `is_read=True`: sono inventario, non avvisi, e altrimenti
+sommergerebbero il contatore dei non letti.
+
+**Orari: il recap e la pagina web mostrano `date_pub_iso`, non `first_seen_at`.** I
+recuperati hanno tutti lo stesso istante di cattura (il momento del ripescaggio, es.
+`16:41:03` per 2.167 righe) e mostrarlo non direbbe nulla. La data di pubblicazione vera
+c'e' su ogni annuncio, quindi si usa quella per ordinare e per stampare, con
+`first_seen_at` come ripiego se manca. Il CSV tiene comunque entrambe le colonne.
 
 ## Trappole — leggere prima di mettere le mani
 
@@ -136,3 +176,10 @@ Quando la prima pagina è tutta nuova il monitor sbircia la pagina successiva (l
 da 60 non stanno in una pagina da 50). Ma lì ci sono annunci precedenti all'accensione:
 vengono filtrati confrontandoli con `Monitor.seeded_at`. Togliendo quel controllo il feed
 si riempie di roba vecchia spacciata per nuova.
+
+**7. Cambiare le colonne del CSV ruota il file.**
+`csv_log.rotate_if_stale()` confronta l'intestazione del file esistente con `COLUMNS`: se
+non combaciano rinomina il vecchio in `...-fino-al-<data>.csv` e ne apre uno pulito.
+Accodare righe con un numero di colonne diverso disallineerebbe tutto. `csv_path()` esclude
+dalla ricerca i file che contengono `ARCHIVE_TAG`, altrimenti riprenderebbe a scrivere su
+un registro chiuso.

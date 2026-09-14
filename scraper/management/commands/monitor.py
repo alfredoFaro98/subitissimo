@@ -10,9 +10,13 @@ spariscono da Subito.
 """
 
 import os
+import queue
 import random
 import sys
+import threading
 import time
+from datetime import datetime, timedelta
+from datetime import time as dt_time
 
 # L'API sincrona di Playwright gira dentro un event loop, e Django rifiuta le
 # query in quel contesto. Qui il processo e' interamente sincrono (nessun await
@@ -21,7 +25,8 @@ import time
 os.environ.setdefault('DJANGO_ALLOW_ASYNC_UNSAFE', '1')
 
 from django.core.management.base import BaseCommand
-from django.db.models import Max, Min
+from django.db.models import Count
+from django.db.models.functions import TruncDate
 from django.utils import timezone
 
 from scraper.csv_log import csv_path, flush_pending
@@ -31,6 +36,15 @@ from scraper.services import HadesError, HadesSession, parse_iso_datetime
 # Se la prima pagina e' TUTTA nuova potremmo aver perso qualcosa nel frattempo:
 # in quel caso si sbircia la pagina dopo, fino a questo limite.
 MAX_PAGES_PER_CHECK = 4
+
+# Recupero della giornata: si sfoglia all'indietro finche' non si supera
+# l'istante di partenza. Tetto di sicurezza, una giornata intera di Informatica
+# sta in ~60 pagine, una di Elettronica in ~180.
+MAX_BACKFILL_PAGES = 150
+
+# Sotto questo buco il recupero non serve: il controllo normale legge comunque
+# la prima pagina, che copre gli ultimi minuti.
+BACKFILL_MIN_GAP_SECONDS = 30 * 60
 
 # Campi di MonitorHit copiati pari pari dal dict normalizzato dell'annuncio.
 HIT_FIELDS = (
@@ -78,7 +92,7 @@ def published_before(item, cutoff):
     return published is not None and published < cutoff
 
 
-def build_hit(monitor, item, is_seed=False):
+def build_hit(monitor, item, is_seed=False, is_backfill=False):
     data = {f: item.get(f) for f in HIT_FIELDS}
     for f in ('description', 'defect_flag', 'defect_reason'):
         data[f] = data[f] or ''
@@ -88,10 +102,102 @@ def build_hit(monitor, item, is_seed=False):
         monitor=monitor,
         date_pub_iso=parse_iso_datetime(item.get('date_pub_iso')),
         is_seed=is_seed,
-        is_read=is_seed,
+        is_backfill=is_backfill,
+        # i recuperati non sono avvisi da leggere, sono inventario
+        is_read=is_seed or is_backfill,
         exported_at=timezone.now() if is_seed else None,
         **data,
     )
+
+
+def unknown_items(monitor, items):
+    """Toglie dalla lista quelli gia' presenti a database.
+
+    Gli id si confrontano a blocchi: SQLite ha un tetto sul numero di parametri
+    di una singola query, e un recupero di giornata ne porta qualche migliaio.
+    """
+    visti = set()
+    ids = [i['subito_id'] for i in items]
+    for k in range(0, len(ids), 900):
+        visti.update(
+            MonitorHit.objects
+            .filter(monitor=monitor, subito_id__in=ids[k:k + 900])
+            .values_list('subito_id', flat=True)
+        )
+    fuori = set()
+    risultato = []
+    for i in items:
+        sid = i['subito_id']
+        if sid in visti or sid in fuori:
+            continue
+        fuori.add(sid)
+        risultato.append(i)
+    return risultato
+
+
+RECAP_TUTTI = -1
+RECAP_DEFAULT = 500
+# Se nessuno risponde si parte lo stesso: il monitor serve acceso, non fermo
+# davanti a una domanda mentre chi l'ha lanciato e' andato a farsi un caffe'.
+SCELTA_TIMEOUT = 30
+
+
+def chiedi_riga(prompt):
+    """Legge una riga, ma senza restare appesa: dopo SCELTA_TIMEOUT si arrende.
+
+    Un monitor fermo davanti a una domanda non sorveglia niente, ed e' il caso
+    tipico di chi lancia il .bat e poi si allontana.
+    """
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    risposta = queue.Queue()
+
+    def leggi():
+        try:
+            risposta.put(sys.stdin.readline())
+        except Exception:
+            risposta.put(None)
+
+    threading.Thread(target=leggi, daemon=True).start()
+    try:
+        return (risposta.get(timeout=SCELTA_TIMEOUT) or '').strip().lower()
+    except queue.Empty:
+        sys.stdout.write('\n')
+        sys.stdout.flush()
+        return ''
+
+
+def giorno_da_testo(testo):
+    """"14/09", "14/09/2026", "ieri", "oggi" o vuoto -> una data. None se non si capisce."""
+    testo = (testo or '').strip().lower()
+    oggi = timezone.localtime().date()
+    if not testo or testo in ('oggi', 'o'):
+        return oggi
+    if testo in ('ieri', 'i'):
+        return oggi - timedelta(days=1)
+    for fmt in ('%d/%m/%Y', '%d/%m', '%d-%m-%Y', '%d-%m'):
+        try:
+            data = datetime.strptime(testo, fmt).date()
+        except ValueError:
+            continue
+        # senza anno si intende quello corrente
+        return data if '%Y' in fmt else data.replace(year=oggi.year)
+    return None
+
+
+def backfill_since(monitor):
+    """Da che ora recuperare, oppure None se non ne vale la pena.
+
+    Mai prima della mezzanotte di oggi: il senso e' "la giornata di oggi", non
+    tutto l'archivio. Se il monitor era acceso poco fa non si recupera nulla.
+    """
+    mezzanotte = timezone.localtime().replace(hour=0, minute=0, second=0, microsecond=0)
+    ultimo = monitor.last_checked_at
+    if ultimo is None:
+        return mezzanotte
+    if (timezone.now() - ultimo).total_seconds() < BACKFILL_MIN_GAP_SECONDS:
+        return None
+    return max(ultimo, mezzanotte)
 
 
 class Command(BaseCommand):
@@ -110,9 +216,14 @@ class Command(BaseCommand):
                             help='Mostra il browser, utile solo per capire cosa succede.')
         parser.add_argument('--no-links', action='store_true',
                             help='Non rendere cliccabili i titoli (se il terminale mostra caratteri strani).')
-        parser.add_argument('--recap', type=int, default=500,
-                            help='Quanti annunci gia\' raccolti oggi ristampare all\'avvio '
-                                 '(default 500, 0 per non mostrarli).')
+        parser.add_argument('--giorno', default=None,
+                            help="Giorno da ristampare all'avvio: gg/mm, ieri oppure oggi. "
+                                 "Se non lo passi, all'avvio te lo chiede.")
+        parser.add_argument('--no-backfill', action='store_true',
+                            help='Non recuperare la giornata di oggi all\'avvio.')
+        parser.add_argument('--recap', type=int, default=None,
+                            help='Quanti annunci di oggi ristampare all\'avvio: 0 nessuno, '
+                                 '-1 tutti. Se non lo passi, all\'avvio te lo chiede.')
 
     # ------------------------------------------------------------------ utils
 
@@ -219,48 +330,208 @@ class Command(BaseCommand):
         monitor.last_error = message[:500]
         monitor.save(update_fields=['last_checked_at', 'last_error'])
 
+    # --------------------------------------------------------------- recupero
+
+    def backfill_monitor(self, session, monitor):
+        """Ripesca gli annunci della giornata ancora online, sfogliando all'indietro.
+
+        Attenzione al significato: si recupera solo cio' che e' SOPRAVVISSUTO.
+        Un annuncio pubblicato stamattina e gia' venduto non e' piu' nell'indice
+        di Subito, quindi nessuno puo' piu' vederlo. E' un inventario di cosa e'
+        ancora comprabile, non il registro di cosa e' passato.
+        """
+        since = backfill_since(monitor)
+        if since is None:
+            return 0
+
+        self.log('{}: recupero la giornata dalle {}...'.format(
+            monitor.label, timezone.localtime(since).strftime('%H:%M')))
+
+        raccolti = []
+        pagine = 0
+        for p in range(MAX_BACKFILL_PAGES):
+            items, _count_all = session.fetch_items(
+                query=monitor.query,
+                category=monitor.category,
+                limit=monitor.page_size,
+                start=p * monitor.page_size,
+                title_only=monitor.title_only,
+                shippable_only=monitor.shippable_only,
+            )
+            pagine += 1
+            if not items:
+                break
+
+            oltre = False
+            for it in items:
+                pub = parse_iso_datetime(it.get('date_pub_iso'))
+                if pub is not None and pub < since:
+                    oltre = True
+                    break
+                if it.get('subito_id'):
+                    raccolti.append(it)
+            if oltre:
+                break
+            time.sleep(0.3)
+
+        if pagine >= MAX_BACKFILL_PAGES:
+            self.log('{}: fermato al tetto di {} pagine, la giornata e\' piu\' lunga'.format(
+                monitor.label, MAX_BACKFILL_PAGES), self.style.WARNING)
+
+        nuovi = unknown_items(monitor, raccolti)
+        if not nuovi:
+            self.log('{}: niente da recuperare, {} annunci gia\' in archivio'.format(
+                monitor.label, len(raccolti)))
+            return 0
+
+        # dal piu' vecchio al piu' recente: l'ordine di inserimento e quello nel
+        # CSV seguono la pubblicazione, non l'ordine in cui li ha restituiti l'API
+        nuovi.sort(key=lambda i: parse_iso_datetime(i.get('date_pub_iso')) or since)
+        MonitorHit.objects.bulk_create(
+            [build_hit(monitor, i, is_backfill=True) for i in nuovi],
+            batch_size=200, ignore_conflicts=True,
+        )
+
+        scritte, errore = flush_pending(monitor)
+        if errore:
+            self.log('CSV non scrivibile ({}): le righe restano in coda'.format(errore),
+                     self.style.WARNING)
+
+        self.log('{}: recuperati {} annunci di oggi ({} pagine, {} nel CSV)'.format(
+            monitor.label, len(nuovi), pagine, scritte), self.style.SUCCESS)
+        self.log('   sono quelli ancora online: chi ha gia\' venduto non e\' piu\' nell\'indice')
+        return len(nuovi)
+
     # ------------------------------------------------------------------ recap
 
-    def print_recap(self, monitors, limit):
-        """Ristampa gli annunci gia' raccolti oggi, letti dal database.
+    def hits_del_giorno(self, monitors, giorno):
+        """Gli annunci PUBBLICATI in quel giorno, dal piu' vecchio al piu' recente.
 
-        Non tocca Subito: e' roba gia' scaricata nelle sessioni precedenti, si
-        rigenerano solo le righe. Serve a ritrovare a schermo quello che si era
-        perso chiudendo la finestra.
+        Il filtro e' sulla data di pubblicazione e non su quando li ha visti il
+        monitor: e' quella che risponde alla domanda "cosa e' uscito quel giorno".
         """
-        if not limit:
-            return
-
-        mezzanotte = timezone.localtime().replace(hour=0, minute=0, second=0, microsecond=0)
-        oggi = MonitorHit.objects.filter(
-            monitor__in=monitors, is_seed=False, first_seen_at__gte=mezzanotte,
+        inizio = timezone.make_aware(datetime.combine(giorno, dt_time.min))
+        return (
+            MonitorHit.objects
+            .filter(monitor__in=monitors, is_seed=False,
+                    date_pub_iso__gte=inizio, date_pub_iso__lt=inizio + timedelta(days=1))
+            .select_related('monitor')
+            .order_by('date_pub_iso', 'pk')
         )
-        totale = oggi.count()
+
+    def scegli_scaglione(self, hits, totale, giorno):
+        """Se il giorno non sta in una schermata, chiede quale fetta mostrare.
+
+        Il numero di scaglioni si calcola sul momento: dipende da quanti annunci
+        ha quel giorno, che cambia di continuo.
+        """
+        if totale <= RECAP_DEFAULT:
+            return list(hits)
+
+        scaglioni = (totale + RECAP_DEFAULT - 1) // RECAP_DEFAULT
+        # un estremo per scaglione, per far vedere che fascia oraria si prende
+        orari = list(hits.values_list('date_pub_iso', flat=True))
+
+        self.stdout.write('')
+        self.stdout.write('Il {} ha {} annunci: troppi per una schermata.'.format(
+            giorno.strftime('%d/%m'), totale))
+        self.stdout.write('Sono {} scaglioni da {}:'.format(scaglioni, RECAP_DEFAULT))
+        for k in range(scaglioni):
+            a = k * RECAP_DEFAULT
+            b = min(a + RECAP_DEFAULT, totale) - 1
+            self.stdout.write('  {}) {} - {}   ({} annunci)'.format(
+                k + 1,
+                timezone.localtime(orari[a]).strftime('%H:%M'),
+                timezone.localtime(orari[b]).strftime('%H:%M'),
+                b - a + 1,
+            ))
+        self.stdout.write('  t) tutti quanti')
+        self.stdout.write('  n) niente, vai ai nuovi')
+
+        scelta = chiedi_riga('Scelta (invio = ultimo scaglione): ')
+        if scelta == 'n':
+            return []
+        if scelta == 't':
+            return list(hits)
+        if scelta.isdigit() and 1 <= int(scelta) <= scaglioni:
+            k = int(scelta) - 1
+            return list(hits[k * RECAP_DEFAULT:(k + 1) * RECAP_DEFAULT])
+        return list(hits[(scaglioni - 1) * RECAP_DEFAULT:])
+
+    def scegli_recap(self, monitors, recap_forzato, giorno_forzato):
+        """Decide cosa ristampare all'avvio. Ritorna (righe, giorno, totale)."""
+        interattivo = (sys.stdin is not None and sys.stdin.isatty()
+                       and sys.stdout.isatty() and recap_forzato is None
+                       and giorno_forzato is None)
+        oggi = timezone.localtime().date()
+
+        if not interattivo:
+            giorno = giorno_forzato or oggi
+            hits = self.hits_del_giorno(monitors, giorno)
+            totale = hits.count()
+            limite = RECAP_DEFAULT if recap_forzato is None else recap_forzato
+            if limite == 0:
+                return [], giorno, totale
+            righe = list(hits) if limite < 0 else list(hits[max(0, totale - limite):])
+            return righe, giorno, totale
+
+        giorni = self.giorni_disponibili(monitors)
+        self.stdout.write('')
+        self.stdout.write('Che giorno vuoi rivedere?')
+        for g, n in giorni:
+            self.stdout.write('   {}  {} annunci{}'.format(
+                g.strftime('%d/%m'), n, '   (oggi)' if g == oggi else ''))
+        scelta = chiedi_riga('Giorno (invio = oggi, oppure gg/mm, "n" per saltare): ')
+
+        if scelta == 'n':
+            return [], oggi, 0
+        giorno = giorno_da_testo(scelta) or oggi
+
+        hits = self.hits_del_giorno(monitors, giorno)
+        totale = hits.count()
         if not totale:
+            self.stdout.write('Il {} non ha annunci in archivio.'.format(giorno.strftime('%d/%m')))
+            return [], giorno, 0
+
+        return self.scegli_scaglione(hits, totale, giorno), giorno, totale
+
+    def giorni_disponibili(self, monitors):
+        righe = (
+            MonitorHit.objects
+            .filter(monitor__in=monitors, is_seed=False, date_pub_iso__isnull=False)
+            .annotate(g=TruncDate('date_pub_iso'))
+            .values('g').annotate(n=Count('id')).order_by('-g')[:7]
+        )
+        return [(r['g'], r['n']) for r in righe]
+
+    def print_recap(self, righe, giorno, totale):
+        """Ristampa annunci gia' in archivio, letti dal database.
+
+        Non tocca Subito: si rigenerano solo le righe a partire dai dati salvati.
+        """
+        if not righe:
             return
 
-        # i piu' recenti, poi rimessi in ordine cronologico: cosi' l'ultimo
-        # raccolto sta in fondo, attaccato a quello che arrivera' dal vivo
-        righe = list(oggi.select_related('monitor').order_by('-first_seen_at')[:limit])
-        righe.reverse()
+        primo = timezone.localtime(righe[0].date_pub_iso or righe[0].first_seen_at)
+        ultimo = timezone.localtime(righe[-1].date_pub_iso or righe[-1].first_seen_at)
+        ripescati = sum(1 for h in righe if h.is_backfill)
 
-        # l'intervallo e' quello dell'intera giornata, non delle sole righe mostrate
-        estremi = oggi.aggregate(primo=Min('first_seen_at'), ultimo=Max('first_seen_at'))
-        testa = 'Oggi: {} annunci raccolti, dalle {} alle {}'.format(
-            totale,
-            timezone.localtime(estremi['primo']).strftime('%H:%M'),
-            timezone.localtime(estremi['ultimo']).strftime('%H:%M'),
-        )
+        testa = '{}: {} annunci, pubblicati dalle {} alle {}'.format(
+            giorno.strftime('%d/%m'), len(righe),
+            primo.strftime('%H:%M'), ultimo.strftime('%H:%M'))
+        if ripescati:
+            testa += ' ({} ripescati, {} visti dal vivo)'.format(ripescati, len(righe) - ripescati)
         if totale > len(righe):
-            testa += ' -- qui sotto gli ultimi {}'.format(len(righe))
+            testa += ' -- {} su {} della giornata'.format(len(righe), totale)
 
-        piu_monitor = len(monitors) > 1
+        piu_monitor = len({h.monitor_id for h in righe}) > 1
         self.stdout.write('')
         self.stdout.write(testa)
         self.stdout.write('--- gia\' raccolti, non sono nuovi ---')
         for hit in righe:
+            quando = hit.date_pub_iso or hit.first_seen_at
             riga = '  {}  . {} | {}{}'.format(
-                timezone.localtime(hit.first_seen_at).strftime('%H:%M:%S'),
+                timezone.localtime(quando).strftime('%H:%M:%S'),
                 hit.price_str or '-',
                 (hit.title or '')[:70],
                 link_marker(hit.url, self.links),
@@ -270,6 +541,83 @@ class Command(BaseCommand):
             self.stdout.write(riga)
         self.stdout.write('--- da qui in poi e\' roba nuova ---')
         self.stdout.write('')
+
+    def record_error(self, monitor, message):
+        monitor.last_checked_at = timezone.now()
+        monitor.last_error = message[:500]
+        monitor.save(update_fields=['last_checked_at', 'last_error'])
+
+    # --------------------------------------------------------------- recupero
+
+    def backfill_monitor(self, session, monitor):
+        """Ripesca gli annunci della giornata ancora online, sfogliando all'indietro.
+
+        Attenzione al significato: si recupera solo cio' che e' SOPRAVVISSUTO.
+        Un annuncio pubblicato stamattina e gia' venduto non e' piu' nell'indice
+        di Subito, quindi nessuno puo' piu' vederlo. E' un inventario di cosa e'
+        ancora comprabile, non il registro di cosa e' passato.
+        """
+        since = backfill_since(monitor)
+        if since is None:
+            return 0
+
+        self.log('{}: recupero la giornata dalle {}...'.format(
+            monitor.label, timezone.localtime(since).strftime('%H:%M')))
+
+        raccolti = []
+        pagine = 0
+        for p in range(MAX_BACKFILL_PAGES):
+            items, _count_all = session.fetch_items(
+                query=monitor.query,
+                category=monitor.category,
+                limit=monitor.page_size,
+                start=p * monitor.page_size,
+                title_only=monitor.title_only,
+                shippable_only=monitor.shippable_only,
+            )
+            pagine += 1
+            if not items:
+                break
+
+            oltre = False
+            for it in items:
+                pub = parse_iso_datetime(it.get('date_pub_iso'))
+                if pub is not None and pub < since:
+                    oltre = True
+                    break
+                if it.get('subito_id'):
+                    raccolti.append(it)
+            if oltre:
+                break
+            time.sleep(0.3)
+
+        if pagine >= MAX_BACKFILL_PAGES:
+            self.log('{}: fermato al tetto di {} pagine, la giornata e\' piu\' lunga'.format(
+                monitor.label, MAX_BACKFILL_PAGES), self.style.WARNING)
+
+        nuovi = unknown_items(monitor, raccolti)
+        if not nuovi:
+            self.log('{}: niente da recuperare, {} annunci gia\' in archivio'.format(
+                monitor.label, len(raccolti)))
+            return 0
+
+        # dal piu' vecchio al piu' recente: l'ordine di inserimento e quello nel
+        # CSV seguono la pubblicazione, non l'ordine in cui li ha restituiti l'API
+        nuovi.sort(key=lambda i: parse_iso_datetime(i.get('date_pub_iso')) or since)
+        MonitorHit.objects.bulk_create(
+            [build_hit(monitor, i, is_backfill=True) for i in nuovi],
+            batch_size=200, ignore_conflicts=True,
+        )
+
+        scritte, errore = flush_pending(monitor)
+        if errore:
+            self.log('CSV non scrivibile ({}): le righe restano in coda'.format(errore),
+                     self.style.WARNING)
+
+        self.log('{}: recuperati {} annunci di oggi ({} pagine, {} nel CSV)'.format(
+            monitor.label, len(nuovi), pagine, scritte), self.style.SUCCESS)
+        self.log('   sono quelli ancora online: chi ha gia\' venduto non e\' piu\' nell\'indice')
+        return len(nuovi)
 
     # ------------------------------------------------------------------- loop
 
@@ -298,12 +646,25 @@ class Command(BaseCommand):
             ))
             return
 
-        # prima il gia' visto (lettura locale, istantanea), poi si accende il browser
-        self.print_recap(monitors, max(0, options['recap']))
-
         session = HadesSession(headless=not options['headful'])
         self.log('Avvio browser e raccolta cookie...')
         session.start()
+        if not options['no_backfill']:
+            for monitor in monitors:
+                try:
+                    self.backfill_monitor(session, monitor)
+                except HadesError as exc:
+                    self.log('{}: recupero fallito ({}), tiro dritto'.format(monitor.label, exc),
+                             self.style.WARNING)
+
+        # la scelta e la stampa vengono dopo il recupero: gli scaglioni vanno
+        # calcolati sui dati veri, non su una giornata ancora a meta'
+        giorno_forzato = giorno_da_testo(options['giorno']) if options['giorno'] else None
+        righe, giorno, totale = self.scegli_recap(monitors, options['recap'], giorno_forzato)
+        if giorno_forzato and not totale:
+            self.log('Il {} non ha annunci in archivio.'.format(giorno.strftime('%d/%m')))
+        self.print_recap(righe, giorno, totale)
+
         self.log('Pronto. {} monitor attivi. Ctrl+C per fermare.'.format(len(monitors)))
         for m in monitors:
             self.log('  registro di "{}": {}'.format(m.label, csv_path(m)))

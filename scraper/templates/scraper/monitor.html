@@ -5,7 +5,7 @@
     <div>
         <h2 class="search-title" style="font-size: 2rem; margin: 0;">Monitor <i class="fa-solid fa-satellite-dish" style="color: var(--primary);"></i></h2>
         <p style="color: var(--text-muted); margin: 5px 0 0;">
-            {{ stats.total }} annunci intercettati · {{ stats.last_day }} nelle ultime 24h · {{ stats.unread }} da vedere
+            {{ stats.live }} visti dal vivo &middot; {{ stats.backfill }} recuperati &middot; {{ stats.last_day }} nelle ultime 24h &middot; {{ stats.unread }} da vedere
         </p>
     </div>
     <label style="display: flex; align-items: center; gap: 8px; color: var(--text-muted); cursor: pointer;">
@@ -136,7 +136,7 @@
             <thead>
                 <tr>
                     <th></th>
-                    <th>Visto</th>
+                    <th>Pubblicato</th>
                     <th>Prezzo</th>
                     <th>Titolo</th>
                     <th>Zona</th>
@@ -157,8 +157,8 @@
                         {% endif %}
                     </td>
                     <td style="white-space: nowrap;">
-                        <div style="font-weight: 500;">{{ hit.first_seen_at|date:"d/m H:i:s" }}</div>
-                        <div style="font-size: 0.8rem; color: var(--text-muted);">{{ hit.first_seen_at|timesince }} fa</div>
+                        <div style="font-weight: 500;">{{ hit.date_pub_iso|default:hit.first_seen_at|date:"d/m H:i" }}</div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted);">{{ hit.date_pub_iso|default:hit.first_seen_at|timesince }} fa</div>
                     </td>
                     <td>
                         <div class="price-tag">
@@ -168,6 +168,7 @@
                     <td>
                         <a href="{{ hit.url }}" target="_blank" class="item-title">{{ hit.title }}</a>
                         {% if hit.shippable %}<span class="badge badge-shipping">spedizione</span>{% endif %}
+                        {% if hit.is_backfill %}<span class="badge" title="Ripescato dall'archivio, non visto arrivare dal vivo">recuperato</span>{% endif %}
                         {% if hit.defect_flag %}<span class="badge">{{ hit.defect_flag }}</span>{% endif %}
                     </td>
                     <td>
@@ -212,7 +213,7 @@
             </div>
         </div>
         <div class="mobile-card-footer">
-            <div style="font-size: 0.8rem; color: var(--text-muted);">Visto {{ hit.first_seen_at|timesince }} fa</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted);">Pubblicato {{ hit.date_pub_iso|default:hit.first_seen_at|timesince }} fa</div>
             <a href="{{ hit.url }}" target="_blank" class="btn-primary" style="padding: 6px 12px; font-size: 0.8rem;">Apri</a>
         </div>
     </div>

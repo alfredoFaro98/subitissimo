@@ -343,12 +343,17 @@ def monitor_view(request):
         hits = hits.filter(is_read=False)
 
     day_ago = timezone.now() - timedelta(hours=24)
+    vivi = MonitorHit.objects.filter(is_seed=False, is_backfill=False)
     stats = {
-        'total': MonitorHit.objects.filter(is_seed=False).count(),
-        'last_day': MonitorHit.objects.filter(is_seed=False, first_seen_at__gte=day_ago).count(),
-        'unread': MonitorHit.objects.filter(is_seed=False, is_read=False).count(),
+        'live': vivi.count(),
+        'backfill': MonitorHit.objects.filter(is_backfill=True).count(),
+        'last_day': vivi.filter(first_seen_at__gte=day_ago).count(),
+        'unread': vivi.filter(is_read=False).count(),
     }
 
+    # si ordina per pubblicazione: i recuperati hanno tutti lo stesso istante di
+    # cattura (il momento del ripescaggio) e ordinarli per quello non direbbe nulla
+    hits = hits.order_by('-date_pub_iso', '-first_seen_at')
     page = Paginator(hits, HITS_PER_PAGE).get_page(request.GET.get('page'))
 
     context = {

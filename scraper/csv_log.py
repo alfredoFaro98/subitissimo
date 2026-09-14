@@ -19,8 +19,12 @@ from django.utils.text import slugify
 
 EXPORT_DIR = getattr(settings, 'MONITOR_CSV_DIR', os.path.join(settings.BASE_DIR, 'export'))
 
+# marcatore nel nome dei registri chiusi da una rotazione
+ARCHIVE_TAG = '-fino-al-'
+
 COLUMNS = [
     'Visto il',
+    'Origine',
     'Prezzo',
     'Prezzo numerico',
     'Titolo',
@@ -49,11 +53,35 @@ def csv_path(monitor):
     Il nome porta l'id, cosi' se rinomini il monitor il registro non si spezza
     in due file: si continua a scrivere su quello che c'e' gia'.
     """
-    esistenti = sorted(glob.glob(os.path.join(EXPORT_DIR, 'monitor-{}-*.csv'.format(monitor.pk))))
+    esistenti = sorted(
+        f for f in glob.glob(os.path.join(EXPORT_DIR, 'monitor-{}-*.csv'.format(monitor.pk)))
+        # i registri chiusi da una rotazione non sono piu' quello attivo
+        if ARCHIVE_TAG not in os.path.basename(f)
+    )
     if esistenti:
         return esistenti[0]
     nome = slugify(monitor.label) or 'monitor'
     return os.path.join(EXPORT_DIR, 'monitor-{}-{}.csv'.format(monitor.pk, nome))
+
+
+def rotate_if_stale(percorso):
+    """Se il file esistente ha colonne diverse da quelle attuali, lo mette da parte.
+
+    Aggiungere una colonna a un file gia' avviato disallineerebbe tutte le righe
+    nuove rispetto all'intestazione. Meglio chiudere il vecchio registro con la
+    data e ricominciarne uno pulito: non si perde niente e restano entrambi
+    leggibili.
+    """
+    if not os.path.exists(percorso) or os.path.getsize(percorso) == 0:
+        return None
+    with open(percorso, 'r', newline='', encoding='utf-8-sig') as fh:
+        prima = fh.readline().rstrip('\r\n')
+    if prima.split(';') == COLUMNS:
+        return None
+    base, est = os.path.splitext(percorso)
+    archivio = '{}{}{}{}'.format(base, ARCHIVE_TAG, timezone.localtime().strftime('%Y%m%d-%H%M'), est)
+    os.rename(percorso, archivio)
+    return archivio
 
 
 def hit_row(hit):
@@ -63,6 +91,7 @@ def hit_row(hit):
         pubblicato = timezone.localtime(hit.date_pub_iso).strftime('%d/%m/%Y %H:%M')
     return [
         visto,
+        'recuperato' if hit.is_backfill else 'dal vivo',
         hit.price_str or '',
         hit.price_num if hit.price_num is not None else '',
         hit.title or '',
@@ -97,6 +126,7 @@ def append_hits(monitor, hits):
 
     percorso = csv_path(monitor)
     os.makedirs(os.path.dirname(percorso), exist_ok=True)
+    rotate_if_stale(percorso)
     intestazione = not os.path.exists(percorso) or os.path.getsize(percorso) == 0
 
     # utf-8-sig e ";" perche' Excel italiano apra il file senza doverlo importare
