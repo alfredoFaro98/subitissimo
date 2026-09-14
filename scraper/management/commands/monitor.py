@@ -12,6 +12,7 @@ spariscono da Subito.
 import os
 import queue
 import random
+import shutil
 import sys
 import threading
 import time
@@ -46,6 +47,10 @@ MAX_BACKFILL_PAGES = 150
 # la prima pagina, che copre gli ultimi minuti.
 BACKFILL_MIN_GAP_SECONDS = 30 * 60
 
+# Quanto indietro si puo' arrivare al massimo. Oltre, sfogliare costa sempre di
+# piu' e quel che si trova e' sempre meno rappresentativo.
+MAX_BACKFILL_WINDOW = timedelta(hours=24)
+
 # Campi di MonitorHit copiati pari pari dal dict normalizzato dell'annuncio.
 HIT_FIELDS = (
     'subito_id', 'title', 'price_str', 'price_num', 'date_pub', 'category',
@@ -67,6 +72,10 @@ def hyperlink(text, url, enabled=True):
     return '\033]8;;{}\033\\{}\033]8;;\033\\'.format(url, text)
 
 
+# colonne occupate a schermo dal segnetto: due spazi piu' le due frecce
+LINK_VISIBILE = 4
+
+
 def link_marker(url, enabled=True):
     """Segnetto cliccabile da appendere in fondo alla riga.
 
@@ -78,6 +87,24 @@ def link_marker(url, enabled=True):
     if not enabled or not url:
         return ''
     return '  ' + hyperlink('>>', url, True)
+
+
+# quanto occupa il prefisso "[23:26:00] " che aggiunge log()
+LARGHEZZA_ORARIO = len('[00:00:00] ')
+
+
+def indice(n, colori=True):
+    """Numero d'ordine dell'annuncio dentro la giornata.
+
+    E' la posizione nella lista cronologica del giorno, non nel blocco stampato:
+    cosi' "#1234" indica sempre lo stesso annuncio, che lo si veda nel recap, in
+    uno scaglione o arrivare dal vivo.
+
+    Verde brillante e grassetto invece del verde normale: le righe dal vivo sono
+    gia' tutte verdi, e un verde uguale ci si perderebbe dentro.
+    """
+    testo = '#{}'.format(n)
+    return '\033[1;92m{}\033[0m'.format(testo) if colori else testo
 
 
 def published_before(item, cutoff):
@@ -188,16 +215,22 @@ def giorno_da_testo(testo):
 def backfill_since(monitor):
     """Da che ora recuperare, oppure None se non ne vale la pena.
 
-    Mai prima della mezzanotte di oggi: il senso e' "la giornata di oggi", non
-    tutto l'archivio. Se il monitor era acceso poco fa non si recupera nulla.
+    Si riparte da dove il monitor si era fermato, anche se nel frattempo e'
+    passata la mezzanotte: fermarsi alle 17:44 e riaccendere alle 00:30
+    significava perdere per sempre tutta la sera, perche' il recupero si
+    fermava all'inizio del giorno nuovo.
+
+    Il tetto e' MAX_BACKFILL_WINDOW: piu' indietro di cosi' non ha senso andare,
+    sia per il costo di sfogliare sia perche' di quella roba sopravvive poco.
+    Al primo avvio in assoluto invece si parte dalla mezzanotte, altrimenti si
+    tirerebbe dentro mezzo archivio.
     """
-    mezzanotte = timezone.localtime().replace(hour=0, minute=0, second=0, microsecond=0)
     ultimo = monitor.last_checked_at
     if ultimo is None:
-        return mezzanotte
+        return timezone.localtime().replace(hour=0, minute=0, second=0, microsecond=0)
     if (timezone.now() - ultimo).total_seconds() < BACKFILL_MIN_GAP_SECONDS:
         return None
-    return max(ultimo, mezzanotte)
+    return max(ultimo, timezone.now() - MAX_BACKFILL_WINDOW)
 
 
 class Command(BaseCommand):
@@ -231,6 +264,37 @@ class Command(BaseCommand):
         stamp = timezone.localtime().strftime('%H:%M:%S')
         line = '[{}] {}'.format(stamp, msg)
         self.stdout.write(style(line) if style else line)
+
+    def colonne(self):
+        """Larghezza del terminale, 0 se non si riesce a saperla.
+
+        Dipende solo dall'essere su un terminale, NON dai colori: una console
+        che non sa colorare sa comunque quanto e' larga, e l'allineamento li'
+        funziona lo stesso.
+
+        Si rilegge ogni volta invece di memorizzarla: la finestra si puo'
+        ridimensionare mentre il monitor gira.
+        """
+        if not sys.stdout.isatty():
+            return 0
+        try:
+            return shutil.get_terminal_size(fallback=(0, 0)).columns
+        except OSError:
+            return 0
+
+    def riga_annuncio(self, testo, url, n, sporgenza=0):
+        """Riga dell'annuncio con il segnetto del link e il numero a destra.
+
+        Il numero si incolla al bordo destro riempiendo di spazi. La lunghezza
+        va calcolata sul testo VISIBILE: la sequenza del link e i codici colore
+        non occupano colonne, contarli sballerebbe l'allineamento.
+        """
+        marcatore = link_marker(url, self.links)
+        visibile = len(testo) + (LINK_VISIBILE if marcatore else 0) + sporgenza
+        numero = indice(n, self.colori)
+        larghezza = self.colonne()
+        spazi = max(1, larghezza - visibile - len('#{}'.format(n))) if larghezza else 1
+        return '{}{}{}{}'.format(testo, marcatore, ' ' * spazi, numero)
 
     def monitors(self, only_id):
         qs = Monitor.objects.filter(is_active=True)
@@ -312,11 +376,18 @@ class Command(BaseCommand):
                 self.style.WARNING,
             )
 
-        for item in collected:
-            prezzo = item.get('price_str') or '-'
-            titolo = (item.get('title') or '')[:70]
-            self.log('  + {} | {}{}'.format(prezzo, titolo, link_marker(item.get('url'), self.links)),
-                     self.style.SUCCESS)
+        # la numerazione prosegue quella della giornata; si stampa dal piu'
+        # vecchio al piu' recente come nel recap, cosi' i numeri scendono
+        oggi = timezone.localtime().date()
+        fin_qui = self.hits_del_giorno(self.monitors_attivi, oggi).count()
+        base = max(1, fin_qui - len(collected) + 1)
+        for k, item in enumerate(reversed(collected)):
+            testo = '  + {} | {}'.format(
+                item.get('price_str') or '-', (item.get('title') or '')[:70])
+            self.log(
+                self.riga_annuncio(testo, item.get('url'), base + k,
+                                   sporgenza=LARGHEZZA_ORARIO),
+                self.style.SUCCESS)
         if collected:
             self.log('{}: {} nuovi ({} nel CSV)'.format(monitor.label, len(collected), scritte),
                      self.style.SUCCESS)
@@ -324,83 +395,6 @@ class Command(BaseCommand):
             # segno di vita ogni tanto, per non lasciare la finestra muta
             self.log('{}: niente di nuovo ({} giri)'.format(monitor.label, monitor.checks_count))
         return len(collected)
-
-    def record_error(self, monitor, message):
-        monitor.last_checked_at = timezone.now()
-        monitor.last_error = message[:500]
-        monitor.save(update_fields=['last_checked_at', 'last_error'])
-
-    # --------------------------------------------------------------- recupero
-
-    def backfill_monitor(self, session, monitor):
-        """Ripesca gli annunci della giornata ancora online, sfogliando all'indietro.
-
-        Attenzione al significato: si recupera solo cio' che e' SOPRAVVISSUTO.
-        Un annuncio pubblicato stamattina e gia' venduto non e' piu' nell'indice
-        di Subito, quindi nessuno puo' piu' vederlo. E' un inventario di cosa e'
-        ancora comprabile, non il registro di cosa e' passato.
-        """
-        since = backfill_since(monitor)
-        if since is None:
-            return 0
-
-        self.log('{}: recupero la giornata dalle {}...'.format(
-            monitor.label, timezone.localtime(since).strftime('%H:%M')))
-
-        raccolti = []
-        pagine = 0
-        for p in range(MAX_BACKFILL_PAGES):
-            items, _count_all = session.fetch_items(
-                query=monitor.query,
-                category=monitor.category,
-                limit=monitor.page_size,
-                start=p * monitor.page_size,
-                title_only=monitor.title_only,
-                shippable_only=monitor.shippable_only,
-            )
-            pagine += 1
-            if not items:
-                break
-
-            oltre = False
-            for it in items:
-                pub = parse_iso_datetime(it.get('date_pub_iso'))
-                if pub is not None and pub < since:
-                    oltre = True
-                    break
-                if it.get('subito_id'):
-                    raccolti.append(it)
-            if oltre:
-                break
-            time.sleep(0.3)
-
-        if pagine >= MAX_BACKFILL_PAGES:
-            self.log('{}: fermato al tetto di {} pagine, la giornata e\' piu\' lunga'.format(
-                monitor.label, MAX_BACKFILL_PAGES), self.style.WARNING)
-
-        nuovi = unknown_items(monitor, raccolti)
-        if not nuovi:
-            self.log('{}: niente da recuperare, {} annunci gia\' in archivio'.format(
-                monitor.label, len(raccolti)))
-            return 0
-
-        # dal piu' vecchio al piu' recente: l'ordine di inserimento e quello nel
-        # CSV seguono la pubblicazione, non l'ordine in cui li ha restituiti l'API
-        nuovi.sort(key=lambda i: parse_iso_datetime(i.get('date_pub_iso')) or since)
-        MonitorHit.objects.bulk_create(
-            [build_hit(monitor, i, is_backfill=True) for i in nuovi],
-            batch_size=200, ignore_conflicts=True,
-        )
-
-        scritte, errore = flush_pending(monitor)
-        if errore:
-            self.log('CSV non scrivibile ({}): le righe restano in coda'.format(errore),
-                     self.style.WARNING)
-
-        self.log('{}: recuperati {} annunci di oggi ({} pagine, {} nel CSV)'.format(
-            monitor.label, len(nuovi), pagine, scritte), self.style.SUCCESS)
-        self.log('   sono quelli ancora online: chi ha gia\' venduto non e\' piu\' nell\'indice')
-        return len(nuovi)
 
     # ------------------------------------------------------------------ recap
 
@@ -426,7 +420,7 @@ class Command(BaseCommand):
         ha quel giorno, che cambia di continuo.
         """
         if totale <= RECAP_DEFAULT:
-            return list(hits)
+            return list(hits), 0
 
         scaglioni = (totale + RECAP_DEFAULT - 1) // RECAP_DEFAULT
         # un estremo per scaglione, per far vedere che fascia oraria si prende
@@ -450,13 +444,14 @@ class Command(BaseCommand):
 
         scelta = chiedi_riga('Scelta (invio = ultimo scaglione): ')
         if scelta == 'n':
-            return []
+            return [], 0
         if scelta == 't':
-            return list(hits)
+            return list(hits), 0
         if scelta.isdigit() and 1 <= int(scelta) <= scaglioni:
             k = int(scelta) - 1
-            return list(hits[k * RECAP_DEFAULT:(k + 1) * RECAP_DEFAULT])
-        return list(hits[(scaglioni - 1) * RECAP_DEFAULT:])
+            return list(hits[k * RECAP_DEFAULT:(k + 1) * RECAP_DEFAULT]), k * RECAP_DEFAULT
+        salto = (scaglioni - 1) * RECAP_DEFAULT
+        return list(hits[salto:]), salto
 
     def scegli_recap(self, monitors, recap_forzato, giorno_forzato):
         """Decide cosa ristampare all'avvio. Ritorna (righe, giorno, totale)."""
@@ -471,9 +466,9 @@ class Command(BaseCommand):
             totale = hits.count()
             limite = RECAP_DEFAULT if recap_forzato is None else recap_forzato
             if limite == 0:
-                return [], giorno, totale
-            righe = list(hits) if limite < 0 else list(hits[max(0, totale - limite):])
-            return righe, giorno, totale
+                return [], giorno, totale, 0
+            salto = 0 if limite < 0 else max(0, totale - limite)
+            return list(hits[salto:]), giorno, totale, salto
 
         giorni = self.giorni_disponibili(monitors)
         self.stdout.write('')
@@ -484,16 +479,17 @@ class Command(BaseCommand):
         scelta = chiedi_riga('Giorno (invio = oggi, oppure gg/mm, "n" per saltare): ')
 
         if scelta == 'n':
-            return [], oggi, 0
+            return [], oggi, 0, 0
         giorno = giorno_da_testo(scelta) or oggi
 
         hits = self.hits_del_giorno(monitors, giorno)
         totale = hits.count()
         if not totale:
             self.stdout.write('Il {} non ha annunci in archivio.'.format(giorno.strftime('%d/%m')))
-            return [], giorno, 0
+            return [], giorno, 0, 0
 
-        return self.scegli_scaglione(hits, totale, giorno), giorno, totale
+        righe, salto = self.scegli_scaglione(hits, totale, giorno)
+        return righe, giorno, totale, salto
 
     def giorni_disponibili(self, monitors):
         righe = (
@@ -504,7 +500,7 @@ class Command(BaseCommand):
         )
         return [(r['g'], r['n']) for r in righe]
 
-    def print_recap(self, righe, giorno, totale):
+    def print_recap(self, righe, giorno, totale, salto=0):
         """Ristampa annunci gia' in archivio, letti dal database.
 
         Non tocca Subito: si rigenerano solo le righe a partire dai dati salvati.
@@ -528,14 +524,14 @@ class Command(BaseCommand):
         self.stdout.write('')
         self.stdout.write(testa)
         self.stdout.write('--- gia\' raccolti, non sono nuovi ---')
-        for hit in righe:
+        for n, hit in enumerate(righe, start=salto + 1):
             quando = hit.date_pub_iso or hit.first_seen_at
-            riga = '  {}  . {} | {}{}'.format(
+            testo = '  {}  . {} | {}'.format(
                 timezone.localtime(quando).strftime('%H:%M:%S'),
                 hit.price_str or '-',
                 (hit.title or '')[:70],
-                link_marker(hit.url, self.links),
             )
+            riga = self.riga_annuncio(testo, hit.url, n)
             if piu_monitor:
                 riga += '  [{}]'.format(hit.monitor.label)
             self.stdout.write(riga)
@@ -559,6 +555,11 @@ class Command(BaseCommand):
         """
         since = backfill_since(monitor)
         if since is None:
+            # lo si scrive: se un giorno manca un pezzo di giornata, dal
+            # terminale si capisce subito se il recupero era stato saltato
+            minuti = int((timezone.now() - monitor.last_checked_at).total_seconds() // 60)
+            self.log('{}: nessun recupero, ultimo controllo {} minuti fa'.format(
+                monitor.label, minuti))
             return 0
 
         self.log('{}: recupero la giornata dalle {}...'.format(
@@ -634,6 +635,10 @@ class Command(BaseCommand):
         # I link si mettono solo se si sta scrivendo su un terminale vero:
         # rediretto su file sporcherebbe il file con i codici di escape.
         self.links = sys.stdout.isatty() and not options['no_links']
+        # style.SUCCESS restituisce il testo tale e quale quando i colori sono
+        # spenti (--no-color, oppure output non su terminale): e' il modo piu'
+        # diretto per sapere se possiamo scrivere sequenze colore a mano
+        self.colori = sys.stdout.isatty() and self.style.SUCCESS('x') != 'x'
 
         only_id = options['monitor']
         jitter = max(0.0, options['jitter'])
@@ -646,6 +651,7 @@ class Command(BaseCommand):
             ))
             return
 
+        self.monitors_attivi = monitors
         session = HadesSession(headless=not options['headful'])
         self.log('Avvio browser e raccolta cookie...')
         session.start()
@@ -660,10 +666,10 @@ class Command(BaseCommand):
         # la scelta e la stampa vengono dopo il recupero: gli scaglioni vanno
         # calcolati sui dati veri, non su una giornata ancora a meta'
         giorno_forzato = giorno_da_testo(options['giorno']) if options['giorno'] else None
-        righe, giorno, totale = self.scegli_recap(monitors, options['recap'], giorno_forzato)
+        righe, giorno, totale, salto = self.scegli_recap(monitors, options['recap'], giorno_forzato)
         if giorno_forzato and not totale:
             self.log('Il {} non ha annunci in archivio.'.format(giorno.strftime('%d/%m')))
-        self.print_recap(righe, giorno, totale)
+        self.print_recap(righe, giorno, totale, salto)
 
         self.log('Pronto. {} monitor attivi. Ctrl+C per fermare.'.format(len(monitors)))
         for m in monitors:
@@ -675,6 +681,7 @@ class Command(BaseCommand):
         try:
             while True:
                 monitors = self.monitors(only_id)
+                self.monitors_attivi = monitors
                 if not monitors:
                     self.log('Nessun monitor attivo, attendo...')
                     time.sleep(10)

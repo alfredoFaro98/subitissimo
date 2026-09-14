@@ -102,6 +102,14 @@ falsata dalla sopravvivenza. Il ripescaggio dalla rete resta solo per oggi.
 Il recap gira **dopo** il recupero della giornata: gli scaglioni vanno calcolati sui dati
 veri, non su una giornata ancora a meta'.
 
+Ogni riga porta a destra, incollato al bordo della finestra, il **numero d'ordine
+dell'annuncio nella giornata** (`#1234`, verde brillante). E' la posizione nella lista
+cronologica del giorno e non nel blocco stampato, cosi' lo stesso annuncio ha lo stesso
+numero nel recap, dentro uno scaglione e quando arriva dal vivo — si ritrova con
+Ctrl+Shift+F. L'allineamento si calcola sulla larghezza VISIBILE della riga: le sequenze
+del link e dei colori non occupano colonne, contarle sballerebbe la colonna dei numeri.
+La larghezza si rilegge a ogni riga, cosi' ridimensionare la finestra non rompe nulla.
+
 Ogni riga finisce con un `>>` cliccabile che apre l'annuncio (sequenza OSC 8, Ctrl+click
 su Windows Terminal). Il link sta sul segnetto e non sul titolo di proposito: il terminale
 sottolinea la zona cliccabile, e sottolineare due caratteri e' meno invadente che
@@ -111,10 +119,16 @@ altrimenti finirebbero dentro i file di log.
 ### Recupero della giornata
 
 All'avvio, se il monitor era spento da piu' di 30 minuti, sfoglia l'archivio all'indietro
-fino alla mezzanotte di oggi e salva tutto quello che trova (`is_backfill=True`, colonna
+**fino a dove si era fermato** — anche attraverso la mezzanotte — e salva quello che trova (`is_backfill=True`, colonna
 `Origine` = "recuperato" nel CSV). Se il buco e' piccolo non fa nulla: il controllo normale
 legge comunque la prima pagina. Costo misurato su Informatica, 16 ore di giornata: **44
 richieste, 26 secondi, 2.167 annunci**.
+
+Il tetto e' 24 ore (`MAX_BACKFILL_WINDOW`). Attraversare la mezzanotte e' il punto
+importante: la prima versione si fermava all'inizio del giorno corrente, quindi spegnere
+alle 17:44 e riaccendere all'una di notte faceva perdere per sempre tutta la sera. Quando
+il recupero viene saltato ora lo scrive a schermo con il motivo, cosi' un buco nei dati si
+diagnostica dal terminale invece che a posteriori.
 
 **Attenzione al significato.** Si recupera solo cio' che e' SOPRAVVISSUTO: un annuncio
 pubblicato stamattina e gia' venduto non e' piu' nell'indice, quindi non lo vedra' mai
