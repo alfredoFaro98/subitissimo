@@ -9,3 +9,6 @@ db.sqlite3-journal
 # Dati locali: non vanno versionati
 db.sqlite3
 export/
+
+# Ambiente virtuale della macchina
+.venv/

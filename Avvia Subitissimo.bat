@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-set "APP_DIR=C:\Users\alfredo\Desktop\subitissimo"
+set "APP_DIR=%~dp0."
 set "APP_URL=http://127.0.0.1:8000/"
 
 cd /d "%APP_DIR%" || (
@@ -20,6 +20,11 @@ if %ERRORLEVEL% EQU 0 (
 
 start "" powershell -NoProfile -WindowStyle Hidden -Command "Start-Sleep -Seconds 2; Start-Process '%APP_URL%'"
 
+if exist "%APP_DIR%\.venv\Scripts\python.exe" (
+    "%APP_DIR%\.venv\Scripts\python.exe" manage.py runserver 127.0.0.1:8000
+    goto :chiuso
+)
+
 where py >nul 2>nul
 if %ERRORLEVEL% EQU 0 (
     py -3 manage.py runserver 127.0.0.1:8000
@@ -27,6 +32,7 @@ if %ERRORLEVEL% EQU 0 (
     python manage.py runserver 127.0.0.1:8000
 )
 
+:chiuso
 echo.
 echo L'app si e' chiusa oppure c'e' stato un errore.
 pause
