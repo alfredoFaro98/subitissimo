@@ -12,7 +12,6 @@ spariscono da Subito.
 import os
 import queue
 import random
-import shutil
 import sys
 import threading
 import time
@@ -72,8 +71,48 @@ def hyperlink(text, url, enabled=True):
     return '\033]8;;{}\033\\{}\033]8;;\033\\'.format(url, text)
 
 
-# colonne occupate a schermo dal segnetto: due spazi piu' le due frecce
-LINK_VISIBILE = 4
+# Larghezze fisse delle colonne: il campo piu' corto viene riempito di spazi,
+# cosi' ogni riga parte esattamente sotto la precedente invece di ballare col
+# contenuto. Sono un massimo solo per il titolo: numero e prezzo preferiscono
+# sporgere piuttosto che mostrare un valore tagliato, cioe' falso (vedi
+# colonna()).
+LARGHEZZA_NUMERO = 6
+LARGHEZZA_PREZZO = 11
+LARGHEZZA_TITOLO = 64
+
+
+def colonna(testo, larghezza, destra=False, taglia=True):
+    """Taglia o riempie un campo perche' occupi sempre `larghezza` colonne.
+
+    Il taglio e' netto, senza puntini di sospensione: la console di Windows e'
+    cp1252 e un carattere unicode ci finirebbe dentro come '?', quindi tanto
+    vale non metterlo. I numeri vanno a destra, il testo a sinistra.
+
+    `taglia=False` per i campi che devono restare veri. Un titolo tagliato si
+    capisce a colpo d'occhio, un numero no: "#100000" ridotto a "#100000"[:6]
+    darebbe "#10000", che e' un altro annuncio esistente e nessuno se ne
+    accorgerebbe. Meglio una riga che sporge di un valore falso, quindi questi
+    campi traboccano e basta — rjust/ljust lasciano passare intatto cio' che e'
+    piu' lungo della larghezza chiesta.
+    """
+    testo = testo if testo else '-'
+    if taglia:
+        testo = testo[:larghezza]
+    return testo.rjust(larghezza) if destra else testo.ljust(larghezza)
+
+
+# Marchio della spedizione. Compare SOLO quando l'annuncio non e' spedibile:
+# e' il caso minoritario (25% misurato su annunci veri) ed e' quello che fa
+# cambiare idea a chi guarda. Segnare anche i sì riempirebbe lo schermo di
+# marchi per dire "tutto normale". La colonna resta larga uguale anche da
+# vuota, altrimenti il titolo ballerebbe di quattro caratteri riga per riga.
+MARCHIO_NON_SPEDIBILE = '[NO]'
+LARGHEZZA_SPED = len(MARCHIO_NON_SPEDIBILE)
+
+
+def spedizione(spedibile):
+    """Colonna della spedizione: vuota se spedibile, marchio se non lo e'."""
+    return ('' if spedibile else MARCHIO_NON_SPEDIBILE).ljust(LARGHEZZA_SPED)
 
 
 def link_marker(url, enabled=True):
@@ -89,10 +128,6 @@ def link_marker(url, enabled=True):
     return '  ' + hyperlink('>>', url, True)
 
 
-# quanto occupa il prefisso "[23:26:00] " che aggiunge log()
-LARGHEZZA_ORARIO = len('[00:00:00] ')
-
-
 def indice(n, colori=True):
     """Numero d'ordine dell'annuncio dentro la giornata.
 
@@ -102,8 +137,11 @@ def indice(n, colori=True):
 
     Verde brillante e grassetto invece del verde normale: le righe dal vivo sono
     gia' tutte verdi, e un verde uguale ci si perderebbe dentro.
+
+    Si impagina PRIMA di colorare: le sequenze di escape non occupano colonne,
+    aggiungerle prima del riempimento sfalserebbe l'incolonnamento.
     """
-    testo = '#{}'.format(n)
+    testo = colonna('#{}'.format(n), LARGHEZZA_NUMERO, destra=True, taglia=False)
     return '\033[1;92m{}\033[0m'.format(testo) if colori else testo
 
 
@@ -265,36 +303,29 @@ class Command(BaseCommand):
         line = '[{}] {}'.format(stamp, msg)
         self.stdout.write(style(line) if style else line)
 
-    def colonne(self):
-        """Larghezza del terminale, 0 se non si riesce a saperla.
+    def riga_annuncio(self, orario, stato, prezzo, spedibile, titolo, url, n):
+        """Riga di un annuncio, a colonne fisse.
 
-        Dipende solo dall'essere su un terminale, NON dai colori: una console
-        che non sa colorare sa comunque quanto e' larga, e l'allineamento li'
-        funziona lo stesso.
+        Ordine: orario, segno di stato, numero d'ordine, prezzo, marchio della
+        spedizione, titolo, link.
+        Il numero sta a sinistra prima del prezzo e non piu' incollato al bordo
+        destro: al bordo la sua posizione dipendeva dalla larghezza della
+        finestra, quindi cambiava a ogni ridimensionamento e non incolonnava
+        niente con la riga sopra.
 
-        Si rilegge ogni volta invece di memorizzarla: la finestra si puo'
-        ridimensionare mentre il monitor gira.
+        L'orario lo mette questa funzione e non piu' log(): il recap deve poter
+        stampare l'ora di pubblicazione dell'annuncio al posto di quella del
+        momento, e con due prefissi diversi le due sezioni non si allineavano.
         """
-        if not sys.stdout.isatty():
-            return 0
-        try:
-            return shutil.get_terminal_size(fallback=(0, 0)).columns
-        except OSError:
-            return 0
-
-    def riga_annuncio(self, testo, url, n, sporgenza=0):
-        """Riga dell'annuncio con il segnetto del link e il numero a destra.
-
-        Il numero si incolla al bordo destro riempiendo di spazi. La lunghezza
-        va calcolata sul testo VISIBILE: la sequenza del link e i codici colore
-        non occupano colonne, contarli sballerebbe l'allineamento.
-        """
-        marcatore = link_marker(url, self.links)
-        visibile = len(testo) + (LINK_VISIBILE if marcatore else 0) + sporgenza
-        numero = indice(n, self.colori)
-        larghezza = self.colonne()
-        spazi = max(1, larghezza - visibile - len('#{}'.format(n))) if larghezza else 1
-        return '{}{}{}{}'.format(testo, marcatore, ' ' * spazi, numero)
+        return '[{}] {} {}  {}  {}  {}{}'.format(
+            orario,
+            stato,
+            indice(n, self.colori),
+            colonna(prezzo, LARGHEZZA_PREZZO, destra=True, taglia=False),
+            spedizione(spedibile),
+            colonna(titolo, LARGHEZZA_TITOLO),
+            link_marker(url, self.links),
+        )
 
     def monitors(self, only_id):
         qs = Monitor.objects.filter(is_active=True)
@@ -382,12 +413,15 @@ class Command(BaseCommand):
         fin_qui = self.hits_del_giorno(self.monitors_attivi, oggi).count()
         base = max(1, fin_qui - len(collected) + 1)
         for k, item in enumerate(reversed(collected)):
-            testo = '  + {} | {}'.format(
-                item.get('price_str') or '-', (item.get('title') or '')[:70])
-            self.log(
-                self.riga_annuncio(testo, item.get('url'), base + k,
-                                   sporgenza=LARGHEZZA_ORARIO),
-                self.style.SUCCESS)
+            self.stdout.write(self.style.SUCCESS(self.riga_annuncio(
+                timezone.localtime().strftime('%H:%M:%S'),
+                '+',
+                item.get('price_str'),
+                item.get('shippable'),
+                item.get('title'),
+                item.get('url'),
+                base + k,
+            )))
         if collected:
             self.log('{}: {} nuovi ({} nel CSV)'.format(monitor.label, len(collected), scritte),
                      self.style.SUCCESS)
@@ -526,12 +560,15 @@ class Command(BaseCommand):
         self.stdout.write('--- gia\' raccolti, non sono nuovi ---')
         for n, hit in enumerate(righe, start=salto + 1):
             quando = hit.date_pub_iso or hit.first_seen_at
-            testo = '  {}  . {} | {}'.format(
+            riga = self.riga_annuncio(
                 timezone.localtime(quando).strftime('%H:%M:%S'),
-                hit.price_str or '-',
-                (hit.title or '')[:70],
+                '.',
+                hit.price_str,
+                hit.shippable,
+                hit.title,
+                hit.url,
+                n,
             )
-            riga = self.riga_annuncio(testo, hit.url, n)
             if piu_monitor:
                 riga += '  [{}]'.format(hit.monitor.label)
             self.stdout.write(riga)

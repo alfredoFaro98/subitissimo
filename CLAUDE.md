@@ -102,13 +102,70 @@ falsata dalla sopravvivenza. Il ripescaggio dalla rete resta solo per oggi.
 Il recap gira **dopo** il recupero della giornata: gli scaglioni vanno calcolati sui dati
 veri, non su una giornata ancora a meta'.
 
-Ogni riga porta a destra, incollato al bordo della finestra, il **numero d'ordine
-dell'annuncio nella giornata** (`#1234`, verde brillante). E' la posizione nella lista
-cronologica del giorno e non nel blocco stampato, cosi' lo stesso annuncio ha lo stesso
-numero nel recap, dentro uno scaglione e quando arriva dal vivo — si ritrova con
-Ctrl+Shift+F. L'allineamento si calcola sulla larghezza VISIBILE della riga: le sequenze
-del link e dei colori non occupano colonne, contarle sballerebbe la colonna dei numeri.
-La larghezza si rilegge a ogni riga, cosi' ridimensionare la finestra non rompe nulla.
+Ogni riga e' a **colonne di larghezza fissa**, cosi' ogni campo parte esattamente sotto
+quello della riga sopra:
+
+```
+[18:42:07] +  #1234      1.200 €        MacBook Pro 14 M1 Pro 16GB 512GB ottime condizioni                >>
+[18:42:07] +  #1235         85 €  [NO]  Monitor Dell 24 pollici IPS                                       >>
+[18:41:55] +  #1236            -  [NO]  Regalo cavi vari                                                  >>
+[09:03:11] .     #9  1.234.567 €        Titolo lunghissimo che supera di parecchio i caratteri previsti   >>
+```
+
+Nell'ordine: orario, segno di stato (`+` arrivato dal vivo, `.` ristampato dal recap),
+**numero d'ordine nella giornata** (`#1234`, verde brillante), prezzo allineato a destra,
+marchio della spedizione, titolo. Il numero sta a sinistra prima del prezzo: quando era
+incollato al bordo destro la sua posizione dipendeva dalla larghezza della finestra,
+quindi ballava a ogni ridimensionamento invece di incolonnarsi.
+
+### La colonna della spedizione
+
+`[NO]` compare **solo quando l'annuncio non e' spedibile**, e la colonna resta larga
+uguale anche da vuota. Si segna l'eccezione e non la norma: misurato su 100 annunci veri
+di Informatica ed Elettronica, i non spedibili sono il **25-27%**, quindi marcare i sì
+riempirebbe lo schermo di marchi per dire "tutto normale".
+
+Segnare il negativo e' lecito qui, a differenza di un eventuale `[VEND]`, perche' il dato
+c'e' davvero: `/item_shippable` risulta presente nel **100%** degli annunci misurati, il
+gruppo "non dichiarato" e' vuoto. `[NO]` afferma quindi qualcosa di osservato, non di
+dedotto.
+
+**Attenzione, c'era un bug e vale la pena ricordarlo.** `ad_to_dict()` confrontava il
+campo con `'true'`, ma l'API risponde in italiano (`sì`/`no`): il confronto non era mai
+vero, il campo usciva sempre `False`, e il valore finale veniva tutto dal ripiego "se c'e'
+un costo di spedizione allora e' spedibile". Risultato: gli annunci con **"Spedizione
+gestita da te"** — spedibili ma senza costo TuttoSubito — risultavano NON spedibili. Sui
+100 annunci misurati erano 5, cioe' un `[NO]` su 6 sarebbe stato falso. Il ripiego sul
+costo e' rimasto: un costo dichiarato e' prova piu' forte del flag.
+
+Il numero e' la posizione nella lista cronologica del giorno e non nel blocco stampato,
+cosi' lo stesso annuncio ha lo stesso numero nel recap, dentro uno scaglione e quando
+arriva dal vivo — si ritrova con Ctrl+Shift+F.
+
+Le larghezze sono `LARGHEZZA_NUMERO`, `LARGHEZZA_PREZZO`, `LARGHEZZA_SPED` e
+`LARGHEZZA_TITOLO`, e il campo piu' corto viene riempito di spazi. Ma sono un **massimo
+per il titolo soltanto**: un titolo troppo lungo si taglia di netto, senza puntini di
+sospensione di proposito — la console di Windows e' cp1252 e il carattere unicode
+diventerebbe un `?` (trappola 3).
+
+Il titolo e' passato da 70 a 64 caratteri quando e' arrivata la colonna della spedizione,
+che ne occupa 6 fra marchio e distanziatore: cosi' la riga resta larga **104 colonne esatte
+come prima**, e chi aveva la finestra della misura giusta non se la ritrova a capo.
+
+**Numero e prezzo invece non si tagliano mai** (`colonna(..., taglia=False)`): traboccano,
+e la riga sporge di qualche colonna. E' voluto. Un titolo tagliato si vede a colpo
+d'occhio, un numero no: `#100000` ridotto a sei caratteri darebbe `#10000`, che e' un
+altro annuncio realmente esistente, e nessuno si accorgerebbe di star leggendo il numero
+sbagliato. Una riga storta e' un difetto visibile, un valore falso e' un difetto
+invisibile — meglio il primo.
+
+Ogni campo si impagina PRIMA di ricevere i colori: le sequenze di escape non occupano
+colonne, contarle sballerebbe l'incolonnamento. Misurato sulle righe vere: 104 colonne
+tutte uguali, 108 col `>>`, e 105 quando un numero fuori scala fa sporgere la riga.
+
+L'orario lo mette `riga_annuncio()` e non piu' `log()`: il recap stampa l'ora di
+**pubblicazione** dell'annuncio mentre il vivo stampa quella di arrivo, e finche' i due
+prefissi erano diversi le due sezioni non si allineavano tra loro.
 
 Ogni riga finisce con un `>>` cliccabile che apre l'annuncio (sequenza OSC 8, Ctrl+click
 su Windows Terminal). Il link sta sul segnetto e non sul titolo di proposito: il terminale
