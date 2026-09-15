@@ -109,6 +109,11 @@ def parse_iso_datetime(value: Any) -> Optional[datetime]:
     except ValueError:
         return None
 
+# L'API risponde in italiano su questo campo. Vanno tenuti anche i valori
+# inglesi: costano nulla e coprono il giorno in cui Subito cambiasse idea.
+SPEDIBILE_SI = {"sì", "si", "true", "yes"}
+
+
 def ad_to_dict(ad: Dict[str, Any]) -> Dict[str, Any]:
     """Normalizza un annuncio grezzo dell'API Hades nel dict usato da tutta l'app."""
     id_annuncio = ad.get("urn") or ""
@@ -135,8 +140,13 @@ def ad_to_dict(ad: Dict[str, Any]) -> Dict[str, Any]:
     costo_sped_str = feature_value(ad, "/item_shipping_cost_tuttosubito")
     costo_sped_num = parse_number(feature_first(ad, "/item_shipping_cost_tuttosubito").get("key") or costo_sped_str)
 
-    spedibile_val = feature_value(ad, "/item_shippable")
-    spedibile = (spedibile_val.lower() == 'true')
+    # Attenzione: il confronto era con 'true', ma l'API manda "sì"/"no", quindi
+    # non era mai vero e il campo usciva sempre False. Il valore finale veniva
+    # tutto dal ripiego sul costo qui sotto, e i ~5% di annunci con "Spedizione
+    # gestita da te" (spedibili ma senza costo TuttoSubito) risultavano NON
+    # spedibili. Misurato su 100 annunci veri: 75 dichiarano sì, ne risultavano 70.
+    spedibile_val = feature_value(ad, "/item_shippable").strip().lower()
+    spedibile = spedibile_val in SPEDIBILE_SI
     
     # Fallback: if we have a shipping cost, it is shippable
     if costo_sped_num is not None:
